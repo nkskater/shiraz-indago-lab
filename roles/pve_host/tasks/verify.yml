@@ -1,0 +1,19 @@
+---
+- name: Apply pending handlers before the final checks
+  ansible.builtin.meta: flush_handlers
+
+- name: Wait for the Proxmox web interface
+  ansible.builtin.wait_for:
+    port: 8006
+    timeout: 120
+
+- name: Read the installed Proxmox VE version
+  ansible.builtin.command:
+    cmd: pveversion
+  register: pve_host__version
+  changed_when: false
+  check_mode: false
+
+- name: Report the installed version
+  ansible.builtin.debug:
+    msg: "{{ inventory_hostname }}: {{ pve_host__version.stdout }}"

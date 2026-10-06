@@ -10,3 +10,12 @@ pve_host__uplink_mac: >-
   {{ ansible_facts[pve_host_uplink_name]['macaddress']
      if pve_host_uplink_name in ansible_facts['interfaces']
      else ansible_facts['default_ipv4']['macaddress'] }}
+
+# Block device of the root filesystem (e.g. /dev/sdb1), and the stable
+# /dev/disk/by-id path of the disk it sits on.
+pve_host__root_device: >-
+  {{ ansible_facts['mounts'] | selectattr('mount', 'equalto', '/') | map(attribute='device') | first }}
+pve_host__boot_disk: >-
+  {{ '/dev/disk/by-id/' ~ (ansible_facts['device_links']['ids'][pve_host__root_disk.stdout | trim] | first)
+     if ansible_facts['device_links']['ids'][pve_host__root_disk.stdout | trim] | default([]) | length > 0
+     else '/dev/' ~ (pve_host__root_disk.stdout | trim) }}

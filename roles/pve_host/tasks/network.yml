@@ -22,6 +22,15 @@
     mode: "0644"
   register: pve_host__interfaces
 
+# Installing Proxmox VE stages a default configuration in interfaces.new, and
+# pvenetcommit.service moves it over /etc/network/interfaces at the next boot,
+# which would silently replace the bridge defined above. Ansible owns this
+# file, so pending changes staged outside Ansible are discarded.
+- name: Discard network changes staged outside Ansible
+  ansible.builtin.file:
+    path: /etc/network/interfaces.new
+    state: absent
+
 - name: Find netplan configuration left by the cloud image
   ansible.builtin.find:
     paths: /etc/netplan

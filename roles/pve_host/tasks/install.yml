@@ -1,4 +1,30 @@
 ---
+# --- Boot loader --------------------------------------------------------------
+
+- name: Check whether the host booted through UEFI
+  ansible.builtin.stat:
+    path: /sys/firmware/efi
+  register: pve_host__uefi
+
+# The Proxmox kernel pulls in grub-pc. On a BIOS-booted cloud image nothing has
+# told grub-pc where the boot loader lives, and its installer fails without an
+# answer. Point it at the disk that holds the root filesystem, by stable ID
+# (sdX names can swap between boots).
+- name: Find the disk that holds the root filesystem
+  ansible.builtin.command:
+    cmd: "lsblk -ndo PKNAME {{ pve_host__root_device }}"
+  register: pve_host__root_disk
+  changed_when: false
+  check_mode: false
+
+- name: Tell grub-pc where to install the boot loader
+  ansible.builtin.debconf:
+    name: grub-pc
+    question: grub-pc/install_devices
+    vtype: multiselect
+    value: "{{ pve_host__boot_disk }}"
+  when: not pve_host__uefi.stat.exists
+
 # --- Kernel -----------------------------------------------------------------
 
 - name: Bring Debian fully up to date before the first install

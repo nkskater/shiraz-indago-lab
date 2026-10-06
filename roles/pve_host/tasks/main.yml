@@ -13,11 +13,16 @@
 - name: Proxmox VE kernel and packages
   ansible.builtin.import_tasks: install.yml
 
-- name: Bridge networking
-  ansible.builtin.import_tasks: network.yml
-
+# Access and the guest agent come before the network change on purpose: if the
+# host does not come back, the console and "qm guest exec" still work.
 - name: Root password and SSH daemon
   ansible.builtin.import_tasks: access.yml
 
-- name: Services and final checks
+- name: Guest agent and time service
   ansible.builtin.import_tasks: services.yml
+
+- name: Bridge networking
+  ansible.builtin.import_tasks: network.yml
+
+- name: Final checks
+  ansible.builtin.import_tasks: verify.yml
