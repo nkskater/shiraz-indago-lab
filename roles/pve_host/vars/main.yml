@@ -1,0 +1,12 @@
+---
+# Internal values - not meant to be overridden.
+pve_host__fqdn: "{{ inventory_hostname }}.{{ pve_host_domain }}"
+
+pve_host__installed: "{{ 'install ok installed' in (pve_host__dpkg.stdout | default('')) }}"
+
+# MAC address of the NIC that carries the host address. Before the bridge
+# exists that is the default-route interface; afterwards it is the pinned NIC.
+pve_host__uplink_mac: >-
+  {{ ansible_facts[pve_host_uplink_name]['macaddress']
+     if pve_host_uplink_name in ansible_facts['interfaces']
+     else ansible_facts['default_ipv4']['macaddress'] }}

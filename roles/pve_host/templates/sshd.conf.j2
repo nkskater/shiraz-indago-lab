@@ -1,0 +1,5 @@
+# Managed by Ansible (role pve_host)
+# Sorted first on purpose: sshd keeps the first value it reads for each option,
+# so this file wins over any cloud-init drop-in.
+PasswordAuthentication {{ pve_host_sshd_password_authentication | bool | ternary('yes', 'no') }}
+PermitRootLogin {{ pve_host_sshd_permit_root_login }}

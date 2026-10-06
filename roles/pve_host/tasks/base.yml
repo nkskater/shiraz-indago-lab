@@ -1,0 +1,28 @@
+---
+# Cloud-init did its one job on first boot (address, user, SSH key). From here
+# on Ansible owns the host; left enabled, cloud-init would rewrite /etc/hosts
+# with a 127.0.1.1 entry on every boot, which breaks Proxmox clustering.
+- name: Disable cloud-init after first boot
+  ansible.builtin.copy:
+    dest: /etc/cloud/cloud-init.disabled
+    content: |
+      # Managed by Ansible (role pve_host)
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Set the hostname
+  ansible.builtin.hostname:
+    name: "{{ inventory_hostname }}"
+
+- name: Resolve every cluster node to its real address
+  ansible.builtin.template:
+    src: hosts.j2
+    dest: /etc/hosts
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Set the timezone
+  community.general.timezone:
+    name: "{{ pve_host_timezone }}"

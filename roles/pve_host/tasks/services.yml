@@ -1,0 +1,37 @@
+---
+- name: Install the QEMU guest agent
+  ansible.builtin.apt:
+    name: qemu-guest-agent
+    state: present
+  when: ansible_facts['virtualization_role'] == 'guest'
+
+- name: Ensure the QEMU guest agent is running
+  ansible.builtin.service:
+    name: qemu-guest-agent
+    state: started
+  when: ansible_facts['virtualization_role'] == 'guest'
+
+- name: Ensure chrony is running and enabled at boot
+  ansible.builtin.service:
+    name: chrony
+    state: started
+    enabled: true
+
+- name: Apply pending handlers before the final checks
+  ansible.builtin.meta: flush_handlers
+
+- name: Wait for the Proxmox web interface
+  ansible.builtin.wait_for:
+    port: 8006
+    timeout: 120
+
+- name: Read the installed Proxmox VE version
+  ansible.builtin.command:
+    cmd: pveversion
+  register: pve_host__version
+  changed_when: false
+  check_mode: false
+
+- name: Report the installed version
+  ansible.builtin.debug:
+    msg: "{{ inventory_hostname }}: {{ pve_host__version.stdout }}"

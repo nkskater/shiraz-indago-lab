@@ -1,0 +1,91 @@
+---
+# The Debian cloud image configures its NIC with netplan + systemd-networkd.
+# Proxmox VE manages /etc/network/interfaces (ifupdown2) and expects a Linux
+# bridge for guest traffic. Nothing here touches the live network: the new
+# configuration is written to disk and activated by one reboot.
+
+- name: Pin the uplink interface name to its MAC address
+  ansible.builtin.template:
+    src: uplink.link.j2
+    dest: "/etc/systemd/network/10-{{ pve_host_uplink_name }}.link"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Update initramfs
+
+- name: Define the guest bridge
+  ansible.builtin.template:
+    src: interfaces.j2
+    dest: /etc/network/interfaces
+    owner: root
+    group: root
+    mode: "0644"
+  register: pve_host__interfaces
+
+- name: Find netplan configuration left by the cloud image
+  ansible.builtin.find:
+    paths: /etc/netplan
+    patterns: "*.yaml"
+  register: pve_host__netplan
+
+- name: Remove the netplan configuration
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ pve_host__netplan.files }}"
+  loop_control:
+    label: "{{ item.path }}"
+
+- name: Remove netplan and systemd-resolved
+  ansible.builtin.apt:
+    name:
+      - netplan.io
+      - systemd-resolved
+    state: absent
+    purge: true
+
+- name: Stop systemd-networkd from starting at boot
+  ansible.builtin.systemd_service:
+    name: systemd-networkd
+    enabled: false
+
+# Proxmox edits this file itself (node > System > DNS), so it must be a plain
+# file rather than a symlink to a resolver stub.
+- name: Write a static resolv.conf
+  ansible.builtin.template:
+    src: resolv.conf.j2
+    dest: /etc/resolv.conf
+    owner: root
+    group: root
+    mode: "0644"
+    follow: false
+
+- name: Rebuild the initramfs now if the interface name was pinned
+  ansible.builtin.meta: flush_handlers
+
+- name: Reboot to activate the bridge
+  ansible.builtin.reboot:
+    reboot_timeout: "{{ pve_host_reboot_timeout }}"
+  when: pve_host_bridge not in ansible_facts['interfaces']
+
+- name: Apply bridge changes on a host that already has the bridge
+  ansible.builtin.command:
+    cmd: ifreload -a
+  changed_when: true
+  when:
+    - pve_host__interfaces is changed
+    - pve_host_bridge in ansible_facts['interfaces']
+
+- name: Re-read network facts
+  ansible.builtin.setup:
+    gather_subset:
+      - network
+
+- name: Check that the bridge carries the host address
+  ansible.builtin.assert:
+    that:
+      - ansible_facts[pve_host_bridge]['ipv4']['address'] == pve_host_address
+      - pve_host_uplink_name in ansible_facts[pve_host_bridge]['interfaces']
+    fail_msg: "{{ pve_host_bridge }} is not up with {{ pve_host_address }} on {{ pve_host_uplink_name }}."
+    quiet: true
+  when: not ansible_check_mode

@@ -1,0 +1,11 @@
+---
+galaxy_info:
+  author: nkskater
+  description: Install and configure Proxmox VE 9 on a Debian 13 (trixie) host
+  license: Proprietary
+  min_ansible_version: "2.16"
+  platforms:
+    - name: Debian
+      versions:
+        - trixie
+dependencies: []

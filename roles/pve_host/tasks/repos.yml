@@ -1,0 +1,40 @@
+---
+- name: Install what the repository tasks need
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - python3-debian
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+# After installation the proxmox-archive-keyring package owns and updates this
+# file, so only fetch it while it is missing.
+- name: Check for the Proxmox archive keyring
+  ansible.builtin.stat:
+    path: "{{ pve_host_keyring_path }}"
+  register: pve_host__keyring
+
+- name: Download the Proxmox archive keyring
+  ansible.builtin.get_url:
+    url: "{{ pve_host_keyring_url }}"
+    dest: "{{ pve_host_keyring_path }}"
+    checksum: "{{ pve_host_keyring_checksum }}"
+    owner: root
+    group: root
+    mode: "0644"
+  when: not pve_host__keyring.stat.exists
+
+- name: Enable the no-subscription repository
+  ansible.builtin.deb822_repository:
+    name: proxmox
+    types: deb
+    uris: "{{ pve_host_repo_uri }}"
+    suites: "{{ ansible_facts['distribution_release'] }}"
+    components: pve-no-subscription
+    signed_by: "{{ pve_host_keyring_path }}"
+    state: present
+  notify: Update apt cache
+
+- name: Refresh the package index now if the repository changed
+  ansible.builtin.meta: flush_handlers

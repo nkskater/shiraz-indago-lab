@@ -1,0 +1,19 @@
+---
+- name: Update apt cache
+  ansible.builtin.apt:
+    update_cache: true
+
+- name: Update grub
+  ansible.builtin.command:
+    cmd: update-grub
+  changed_when: true
+
+- name: Update initramfs
+  ansible.builtin.command:
+    cmd: update-initramfs -u -k all
+  changed_when: true
+
+- name: Reload ssh
+  ansible.builtin.service:
+    name: ssh
+    state: reloaded

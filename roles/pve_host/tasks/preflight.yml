@@ -1,0 +1,43 @@
+---
+- name: Check that this is a supported host
+  ansible.builtin.assert:
+    that:
+      - ansible_facts['distribution'] == 'Debian'
+      - ansible_facts['distribution_major_version'] == '13'
+      - ansible_facts['architecture'] == 'x86_64'
+    fail_msg: This role installs Proxmox VE 9 and needs Debian 13 (trixie) on x86_64.
+    quiet: true
+
+- name: Check required variables
+  ansible.builtin.assert:
+    that:
+      - pve_host_gateway | length > 0
+      - pve_host_nameservers | length > 0
+      - pve_host_cluster_hosts | selectattr('name', 'equalto', inventory_hostname) | list | length == 1
+    fail_msg: Set pve_host_gateway, pve_host_nameservers and list this host in pve_host_cluster_hosts.
+    quiet: true
+
+- name: Count CPUs that expose hardware virtualization
+  ansible.builtin.command:
+    cmd: grep -Ecw 'vmx|svm' /proc/cpuinfo
+  register: pve_host__virt_cpus
+  changed_when: false
+  failed_when: pve_host__virt_cpus.rc > 1
+  check_mode: false
+
+- name: Check that the host can run KVM guests
+  ansible.builtin.assert:
+    that:
+      - pve_host__virt_cpus.stdout | int > 0
+    fail_msg: >-
+      No vmx/svm CPU flag. For a nested host, give the VM CPU type 'host' and
+      enable nested virtualization on the hypervisor underneath.
+    quiet: true
+
+- name: Check whether Proxmox VE is already installed
+  ansible.builtin.command:
+    cmd: dpkg-query -W -f='${Status}' proxmox-ve
+  register: pve_host__dpkg
+  changed_when: false
+  failed_when: false
+  check_mode: false

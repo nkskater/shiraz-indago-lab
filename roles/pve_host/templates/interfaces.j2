@@ -1,0 +1,15 @@
+# Managed by Ansible (role pve_host)
+auto lo
+iface lo inet loopback
+
+iface {{ pve_host_uplink_name }} inet manual
+
+auto {{ pve_host_bridge }}
+iface {{ pve_host_bridge }} inet static
+	address {{ pve_host_address }}/{{ pve_host_prefix }}
+	gateway {{ pve_host_gateway }}
+	bridge-ports {{ pve_host_uplink_name }}
+	bridge-stp off
+	bridge-fd 0
+
+source /etc/network/interfaces.d/*

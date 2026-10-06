@@ -1,0 +1,16 @@
+---
+- name: Set the root password
+  ansible.builtin.user:
+    name: root
+    password: "{{ pve_host_root_password_hash }}"
+  when: pve_host_root_password_hash | length > 0
+
+- name: Configure SSH logins
+  ansible.builtin.template:
+    src: sshd.conf.j2
+    dest: /etc/ssh/sshd_config.d/00-pve-host.conf
+    owner: root
+    group: root
+    mode: "0644"
+    validate: sshd -t -f %s
+  notify: Reload ssh

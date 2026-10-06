@@ -1,0 +1,23 @@
+---
+# Follows https://pve.proxmox.com/wiki/Install_Proxmox_VE_on_Debian_13_Trixie
+
+- name: Preflight checks
+  ansible.builtin.import_tasks: preflight.yml
+
+- name: Hostname, name resolution and time zone
+  ansible.builtin.import_tasks: base.yml
+
+- name: Proxmox package repository
+  ansible.builtin.import_tasks: repos.yml
+
+- name: Proxmox VE kernel and packages
+  ansible.builtin.import_tasks: install.yml
+
+- name: Bridge networking
+  ansible.builtin.import_tasks: network.yml
+
+- name: Root password and SSH daemon
+  ansible.builtin.import_tasks: access.yml
+
+- name: Services and final checks
+  ansible.builtin.import_tasks: services.yml
