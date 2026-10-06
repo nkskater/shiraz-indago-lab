@@ -1,0 +1,14 @@
+---
+galaxy_info:
+  author: nkskater
+  description: Create a cloud-init VM on Proxmox VE by cloning a template, through the API
+  license: Proprietary
+  min_ansible_version: "2.16"
+  platforms:
+    - name: Debian
+      versions:
+        - trixie
+    - name: Ubuntu
+      versions:
+        - noble
+dependencies: []

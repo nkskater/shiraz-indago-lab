@@ -1,0 +1,173 @@
+---
+# Creates one VM per inventory host. Everything talks to the Proxmox API from
+# the control node, so the play using this role needs gather_facts: false -
+# the host does not exist yet on the first run.
+
+- name: Manage the guest through the Proxmox API
+  delegate_to: localhost
+  become: false
+  module_defaults:
+    group/community.proxmox.proxmox: "{{ pve_guest_api }}"
+  block:
+    - name: Check required variables
+      ansible.builtin.assert:
+        that:
+          - pve_guest_api.api_host | default('') | length > 0
+          - pve_guest_node | length > 0
+          - pve_guest_vmid | int > 0
+          - pve_guest_template_vmid | int > 0
+          - pve_guest_template_name | length > 0
+          - pve_guest_storage | length > 0
+          - pve_guest_gateway | length > 0
+          - pve_guest_ssh_public_key | length > 0
+        quiet: true
+
+    # --- Guard rails --------------------------------------------------------
+
+    - name: Look up the VMID
+      community.proxmox.proxmox_vm_info:
+        vmid: "{{ pve_guest_vmid }}"
+        type: qemu
+      register: pve_guest__lookup
+
+    - name: Refuse to reuse a VMID that belongs to something else
+      ansible.builtin.assert:
+        that:
+          - pve_guest__lookup.proxmox_vms[0].name == pve_guest_name
+        fail_msg: >-
+          VMID {{ pve_guest_vmid }} is already used by
+          '{{ pve_guest__lookup.proxmox_vms[0].name | default('?') }}'. Not touching it.
+        quiet: true
+      when: pve_guest__exists
+
+    - name: Probe the guest's address before creating it
+      ansible.builtin.command:
+        cmd: "ping -c 2 -W 1 {{ pve_guest_ip }}"
+      register: pve_guest__ping
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      when: not pve_guest__exists
+
+    - name: Refuse to create a guest on an address that is already in use
+      ansible.builtin.assert:
+        that:
+          - pve_guest__ping.rc != 0
+        fail_msg: "{{ pve_guest_ip }} already answers ping. Pick a free address for {{ pve_guest_name }}."
+        quiet: true
+      when: not pve_guest__exists
+
+    # --- Create ---------------------------------------------------------------
+
+    - name: Clone the guest from its template
+      community.proxmox.proxmox_kvm:
+        node: "{{ pve_guest_node }}"
+        clone: "{{ pve_guest_template_name }}"
+        vmid: "{{ pve_guest_template_vmid }}"
+        newid: "{{ pve_guest_vmid }}"
+        name: "{{ pve_guest_name }}"
+        full: true
+        format: unspecified
+        storage: "{{ pve_guest_storage }}"
+        pool: "{{ pve_guest_pool | default(omit, true) }}"
+        timeout: "{{ pve_guest_clone_timeout }}"
+      when: not pve_guest__exists
+      throttle: 1
+
+    # --- Configure ------------------------------------------------------------
+
+    - name: Read the guest's current configuration
+      community.proxmox.proxmox_vm_info:
+        vmid: "{{ pve_guest_vmid }}"
+        type: qemu
+        config: current
+      register: pve_guest__info
+
+    - name: Apply hardware and cloud-init settings
+      community.proxmox.proxmox_kvm:
+        node: "{{ pve_guest_node }}"
+        vmid: "{{ pve_guest_vmid }}"
+        name: "{{ pve_guest_name }}"
+        update: true
+        description: "{{ pve_guest_description }}"
+        cores: "{{ pve_guest_cores }}"
+        cpu: "{{ pve_guest_cpu_type }}"
+        memory: "{{ pve_guest_memory_mb }}"
+        balloon: "{{ pve_guest_balloon_mb }}"
+        onboot: "{{ pve_guest_onboot }}"
+        agent: enabled=1
+        tags: "{{ pve_guest_tags }}"
+        ciuser: "{{ pve_guest_ci_user }}"
+        sshkeys: "{{ pve_guest_ssh_public_key }}"
+        ipconfig:
+          ipconfig0: "{{ pve_guest__desired.ipconfig0 }}"
+        nameservers: "{{ pve_guest_nameservers }}"
+        searchdomains: "{{ [pve_guest_search_domain] if pve_guest_search_domain | length > 0 else omit }}"
+      when:
+        - pve_guest__info.proxmox_vms | length > 0
+        - pve_guest__needs_update
+
+    - name: Grow the OS disk
+      community.proxmox.proxmox_disk:
+        vmid: "{{ pve_guest_vmid }}"
+        disk: "{{ pve_guest_os_disk }}"
+        size: "{{ pve_guest_os_disk_size_gb }}G"
+        state: resized
+      when:
+        - pve_guest__info.proxmox_vms | length > 0
+        - ('size=' ~ pve_guest_os_disk_size_gb ~ 'G') not in (pve_guest__config[pve_guest_os_disk] | default(''))
+
+    - name: Add extra disks
+      community.proxmox.proxmox_disk:
+        vmid: "{{ pve_guest_vmid }}"
+        disk: "{{ item.disk }}"
+        storage: "{{ pve_guest_storage }}"
+        size: "{{ item.size_gb }}"
+        backup: "{{ item.backup | default(true) }}"
+        discard: "on"
+        ssd: true
+        iothread: true
+        state: present
+      loop: "{{ pve_guest_extra_disks }}"
+      loop_control:
+        label: "{{ item.disk }} ({{ item.size_gb }}G)"
+      when:
+        - pve_guest__info.proxmox_vms | length > 0
+        - item.disk not in pve_guest__config
+
+    # --- Start ----------------------------------------------------------------
+
+    - name: Start the guest
+      community.proxmox.proxmox_kvm:
+        node: "{{ pve_guest_node }}"
+        vmid: "{{ pve_guest_vmid }}"
+        state: started
+        timeout: 120
+      when: pve_guest_start | bool
+
+    - name: Wait for SSH to come up
+      ansible.builtin.wait_for:
+        host: "{{ pve_guest_ip }}"
+        port: 22
+        timeout: "{{ pve_guest_boot_timeout }}"
+      when:
+        - pve_guest_start | bool
+        - pve_guest__info.proxmox_vms | length > 0
+
+- name: Wait until Ansible can log in
+  ansible.builtin.wait_for_connection:
+    timeout: "{{ pve_guest_boot_timeout }}"
+  when:
+    - pve_guest_start | bool
+    - pve_guest__info.proxmox_vms | length > 0   # false only in check mode before the first build
+
+- name: Wait for cloud-init to finish its first boot
+  ansible.builtin.command:
+    cmd: cloud-init status --wait
+  register: pve_guest__cloud_init
+  changed_when: false
+  # rc 2 = finished with recoverable warnings
+  failed_when: pve_guest__cloud_init.rc not in [0, 2]
+  when:
+    - pve_guest_start | bool
+    - pve_guest__info.proxmox_vms | length > 0

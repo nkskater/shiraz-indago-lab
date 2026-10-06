@@ -1,0 +1,42 @@
+---
+# Connection to the Proxmox cluster that will own the guest. Keys are
+# community.proxmox module parameters (api_host, api_user, api_token_id,
+# api_token_secret, validate_certs).
+pve_guest_api: {}
+
+# Required
+pve_guest_node: ""               # Proxmox node to create the guest on
+pve_guest_vmid: 0
+pve_guest_template_vmid: 0
+pve_guest_template_name: ""
+pve_guest_storage: ""
+
+pve_guest_name: "{{ inventory_hostname }}"
+pve_guest_description: Managed by Ansible.
+pve_guest_pool: ""
+pve_guest_tags: []
+
+# Hardware
+pve_guest_cores: 2
+pve_guest_memory_mb: 2048
+pve_guest_balloon_mb: 0          # 0 disables ballooning
+pve_guest_cpu_type: x86-64-v2-AES
+pve_guest_onboot: false
+pve_guest_os_disk: scsi0
+pve_guest_os_disk_size_gb: 15
+# Extra disks: [{ disk: scsi1, size_gb: 64, backup: false }]
+pve_guest_extra_disks: []
+
+# Cloud-init
+pve_guest_ip: "{{ ansible_host }}"
+pve_guest_prefix: 24
+pve_guest_gateway: ""
+pve_guest_nameservers: []
+pve_guest_search_domain: ""
+pve_guest_ci_user: ansible
+pve_guest_ssh_public_key: ""
+
+# Lifecycle
+pve_guest_start: true
+pve_guest_clone_timeout: 900
+pve_guest_boot_timeout: 300

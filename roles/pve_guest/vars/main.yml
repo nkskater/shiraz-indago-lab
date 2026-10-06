@@ -1,0 +1,27 @@
+---
+# Internal values - not meant to be overridden.
+pve_guest__exists: "{{ pve_guest__lookup.proxmox_vms | default([]) | length > 0 }}"
+
+pve_guest__config: >-
+  {{ (pve_guest__info.proxmox_vms | default([]) | first | default({})).config | default({}) }}
+
+# Settings this role owns, written the way Proxmox reports them, so that the
+# update task only runs when something actually differs. (The update call
+# itself always reports "changed".)
+pve_guest__desired:
+  cores: "{{ pve_guest_cores | string }}"
+  memory: "{{ pve_guest_memory_mb | string }}"
+  balloon: "{{ pve_guest_balloon_mb | string }}"
+  cpu: "{{ pve_guest_cpu_type }}"
+  onboot: "{{ pve_guest_onboot | bool | ternary('1', '0') }}"
+  ciuser: "{{ pve_guest_ci_user }}"
+  ipconfig0: "ip={{ pve_guest_ip }}/{{ pve_guest_prefix }},gw={{ pve_guest_gateway }}"
+  tags: "{{ pve_guest_tags | sort | join(';') }}"
+
+pve_guest__current: >-
+  {{ dict(pve_guest__desired.keys()
+          | zip(pve_guest__desired.keys()
+                | map('extract', dict(pve_guest__desired.keys() | product([''])) | combine(pve_guest__config))
+                | map('string'))) }}
+
+pve_guest__needs_update: "{{ pve_guest__current != pve_guest__desired }}"
