@@ -1,0 +1,87 @@
+---
+# Phase 1 - build the two nested Proxmox VE hosts on the physical node.
+#
+#   ansible-playbook playbooks/shiraz/01-nested-hosts.yml
+#
+# Safe to re-run: existing VMs are never recreated, and a second run reports
+# no changes.
+
+- name: Preflight checks against the physical Proxmox node
+  hosts: physical
+  gather_facts: false
+  become: false
+  tags: [preflight]
+  tasks:
+    - name: Check that the API token secret is in the vault
+      ansible.builtin.assert:
+        that:
+          - vault_physical_api_token_secret is defined
+          - vault_physical_api_token_secret != 'CHANGE_ME'
+        fail_msg: >-
+          Store the token secret first:
+          ansible-vault edit inventory/group_vars/all/vault.yml
+        quiet: true
+
+    - name: Ask the API for the lab pool using the token
+      ansible.builtin.uri:
+        url: "https://{{ physical_api.api_host }}:8006/api2/json/pools/{{ lab_pool }}"
+        headers:
+          Authorization: >-
+            PVEAPIToken={{ physical_api.api_user }}!{{ physical_api.api_token_id }}={{ physical_api.api_token_secret }}
+        validate_certs: "{{ physical_api.validate_certs }}"
+        status_code: [200, 401, 403, 500, 501]
+      delegate_to: localhost
+      register: preflight_pool
+      no_log: true          # the request carries the token secret
+      check_mode: false
+
+    - name: Check that the token works and the pool exists
+      ansible.builtin.assert:
+        that:
+          - preflight_pool.status == 200
+        fail_msg: >-
+          HTTP {{ preflight_pool.status }} from the Proxmox API. Check that pool
+          '{{ lab_pool }}' exists and that token
+          {{ physical_api.api_user }}!{{ physical_api.api_token_id }} has access to it
+          (see README.md, "One-time setup on the physical node").
+        quiet: true
+
+    - name: Read the nested virtualization setting
+      ansible.builtin.shell:
+        cmd: cat /sys/module/kvm_intel/parameters/nested /sys/module/kvm_amd/parameters/nested 2>/dev/null
+      register: preflight_nested
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: Check that nested virtualization is enabled
+      ansible.builtin.assert:
+        that:
+          - preflight_nested.stdout | trim in ['Y', '1']
+        fail_msg: >-
+          Nested virtualization is off on {{ inventory_hostname }}. See
+          docs/shiraz-mock.md for how to enable it (needs a node reboot).
+        quiet: true
+
+- name: Build the Debian cloud-init template on the physical node
+  hosts: physical
+  gather_facts: false
+  become: true
+  tags: [template]
+  roles:
+    - role: pve_cloud_template
+
+- name: Create the nested host VMs
+  hosts: nested_pve
+  gather_facts: false       # the VMs do not exist yet on the first run
+  tags: [provision]
+  roles:
+    - role: pve_guest
+
+- name: Install and configure Proxmox VE on the nested hosts
+  hosts: nested_pve
+  gather_facts: true
+  become: true
+  tags: [configure]
+  roles:
+    - role: pve_host
