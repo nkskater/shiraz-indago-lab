@@ -1,0 +1,4 @@
+# Managed by Ansible (role shiraz_common)
+# Sorted first on purpose: sshd keeps the first value it reads for each option,
+# so this file wins over the cloud image's 60-cloudimg-settings.conf.
+PasswordAuthentication {{ shiraz_common_sshd_password_authentication | bool | ternary('yes', 'no') }}

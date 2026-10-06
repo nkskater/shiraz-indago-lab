@@ -1,0 +1,11 @@
+---
+galaxy_info:
+  author: nkskater
+  description: Baseline for the indaGO Shiraz mock servers, following the vendor server spec
+  license: Proprietary
+  min_ansible_version: "2.16"
+  platforms:
+    - name: Ubuntu
+      versions:
+        - noble
+dependencies: []

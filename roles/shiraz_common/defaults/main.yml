@@ -1,0 +1,44 @@
+---
+shiraz_common_timezone: America/New_York
+
+shiraz_common_packages:
+  - ca-certificates
+  - chrony
+  - curl
+  - htop
+  - python3-requests     # needed by the community.docker modules
+  - qemu-guest-agent
+  - tmux
+  - ufw
+  - vim
+
+# Name resolution between the servers: [{ name: shiraz-db, address: 192.168.1.35 }]
+shiraz_common_hosts: []
+
+# Spec: servers must never sleep, suspend or hibernate.
+shiraz_common_masked_targets:
+  - sleep.target
+  - suspend.target
+  - hibernate.target
+  - hybrid-sleep.target
+
+# Spec: local vendor support account with sudo and a password that never expires.
+shiraz_common_admin_user: dmwh-admin
+shiraz_common_admin_comment: DMW&H support account
+shiraz_common_admin_password_hash: ""      # sha512-crypt hash; required
+shiraz_common_admin_groups:
+  - sudo
+
+shiraz_common_sshd_password_authentication: true
+
+# Spec: ports that must be reachable. Opened for TCP and UDP.
+shiraz_common_firewall_ports:
+  - 22
+  - 80
+  - 443
+  - 1433
+  - 1434
+  - 8080
+  - 8083
+  - 15432
+  - 15433

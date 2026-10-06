@@ -1,0 +1,101 @@
+---
+- name: Check required variables
+  ansible.builtin.assert:
+    that:
+      - shiraz_common_admin_password_hash | length > 0
+      - 22 in shiraz_common_firewall_ports
+    fail_msg: Set shiraz_common_admin_password_hash and keep port 22 in shiraz_common_firewall_ports.
+    quiet: true
+
+# --- Identity and name resolution --------------------------------------------
+
+# Cloud-init did its one job on first boot (address, user, SSH key). Left
+# enabled it rewrites /etc/hosts on every boot and would drop the entries below.
+- name: Disable cloud-init after first boot
+  ansible.builtin.copy:
+    dest: /etc/cloud/cloud-init.disabled
+    content: |
+      # Managed by Ansible (role shiraz_common)
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Set the hostname
+  ansible.builtin.hostname:
+    name: "{{ inventory_hostname }}"
+
+- name: Resolve the other mock servers by name
+  ansible.builtin.blockinfile:
+    path: /etc/hosts
+    marker: "# {mark} shiraz mock servers - managed by Ansible"
+    block: |
+      {% for server in shiraz_common_hosts %}
+      {{ server.address }} {{ server.name }}
+      {% endfor %}
+
+# --- Time and packages ---------------------------------------------------------
+
+- name: Set the timezone
+  community.general.timezone:
+    name: "{{ shiraz_common_timezone }}"
+
+- name: Install base packages
+  ansible.builtin.apt:
+    name: "{{ shiraz_common_packages }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Ensure chrony and the guest agent are running and enabled at boot
+  ansible.builtin.service:
+    name: "{{ item }}"
+    state: started
+    enabled: true
+  loop:
+    - chrony
+    - qemu-guest-agent
+
+# --- Power management (spec: never sleep) ---------------------------------------
+
+- name: Mask sleep, suspend and hibernate
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    masked: true
+  loop: "{{ shiraz_common_masked_targets }}"
+
+# --- Accounts and SSH -------------------------------------------------------------
+
+- name: Create the vendor support account
+  ansible.builtin.user:
+    name: "{{ shiraz_common_admin_user }}"
+    comment: "{{ shiraz_common_admin_comment }}"
+    password: "{{ shiraz_common_admin_password_hash }}"
+    groups: "{{ shiraz_common_admin_groups }}"
+    append: true
+    shell: /bin/bash
+    password_expire_max: 99999      # chage -M: the password never expires
+    expires: -1                     # the account never expires
+
+- name: Keep SSH password logins enabled
+  ansible.builtin.template:
+    src: sshd.conf.j2
+    dest: /etc/ssh/sshd_config.d/00-shiraz.conf
+    owner: root
+    group: root
+    mode: "0644"
+    validate: sshd -t -f %s
+  notify: Reload ssh
+
+# --- Firewall (spec port list) ------------------------------------------------------
+
+- name: Allow the ports from the server spec
+  community.general.ufw:
+    rule: allow
+    port: "{{ item | string }}"
+  loop: "{{ shiraz_common_firewall_ports }}"
+
+- name: Enable the firewall and deny other inbound traffic
+  community.general.ufw:
+    state: enabled
+    policy: deny
+    direction: incoming
