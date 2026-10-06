@@ -4,3 +4,10 @@ shiraz_db_sa_password: "{{ vault_mssql_sa_password }}"
 shiraz_db_database: "{{ shiraz_database_name }}"
 shiraz_db_login: "{{ shiraz_database_login }}"
 shiraz_db_login_password: "{{ vault_mssql_shiraz_svc_password }}"
+
+# --- What verify.yml expects on this server -------------------------------------
+verify_containers:
+  - mssql
+verify_ports:
+  - 22
+  - 1433

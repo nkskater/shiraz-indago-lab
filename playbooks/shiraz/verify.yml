@@ -1,0 +1,198 @@
+---
+# Health check for the whole lab. Changes nothing; prints one PASS/FAIL table
+# and exits non-zero if anything failed.
+#
+#   ansible-playbook playbooks/shiraz/verify.yml
+#
+# Options (used by failover-test.yml while a host is deliberately down):
+#   -e '{"verify_down_nodes": ["shiraz-pve-a"]}'   nodes expected to be off
+#   -e verify_replication=false                      skip the replication check
+
+- name: Verify the nested cluster
+  hosts: nested_pve
+  gather_facts: false
+  become: true
+  tasks:
+    - name: Skip nodes that are expected to be down
+      ansible.builtin.meta: end_host
+      when: inventory_hostname in (verify_down_nodes | default([]))
+
+    - name: Try to log in
+      ansible.builtin.wait_for_connection:
+        timeout: 15
+      register: verify_ssh
+      ignore_errors: true
+      ignore_unreachable: true
+
+    - name: Collect cluster state
+      when: verify_ssh is succeeded
+      block:
+        - name: Read quorum state
+          ansible.builtin.command:
+            cmd: pvecm status
+          register: verify_quorum
+          changed_when: false
+          failed_when: false
+
+        - name: Read replication state of the guests on this node
+          ansible.builtin.command:
+            cmd: "pvesh get /nodes/{{ inventory_hostname }}/replication --output-format json"
+          register: verify_repl
+          changed_when: false
+          failed_when: false
+
+        - name: Read HA state
+          ansible.builtin.command:
+            cmd: ha-manager status
+          register: verify_ha
+          changed_when: false
+          failed_when: false
+
+    - name: Record the results
+      ansible.builtin.set_fact:
+        verify_results: "{{ verify_rows | selectattr('use') | list }}"
+      vars:
+        verify_jobs: "{{ (verify_repl.stdout | default('[]', true)) | from_json }}"
+        verify_bad_jobs: >-
+          {{ verify_jobs | selectattr('fail_count', 'defined') | selectattr('fail_count', 'gt', 0) | map(attribute='id') | list
+             + verify_jobs | rejectattr('last_sync', 'defined') | map(attribute='id') | list }}
+        verify_votes: "{{ verify_quorum.stdout | default('') | regex_search('Total votes:\\s+(\\d+)', '\\1') | default(['?'], true) | first }}"
+        verify_expected: "{{ verify_quorum.stdout | default('') | regex_search('Expected votes:\\s+(\\d+)', '\\1') | default(['?'], true) | first }}"
+        verify_ha_bad: "{{ verify_ha.stdout | default('') | regex_findall('service \\S+ \\(\\S+, (?:error|fence|recovery)\\)') }}"
+        verify_rows:
+          - check: SSH login
+            use: true
+            ok: "{{ verify_ssh is succeeded }}"
+            detail: ""
+          - check: Cluster quorate
+            use: "{{ verify_ssh is succeeded }}"
+            ok: "{{ verify_quorum.stdout | default('') is search('Quorate:\\s+Yes') }}"
+            detail: "{{ verify_votes }} of {{ verify_expected }} votes"
+          - check: QDevice vote present
+            use: "{{ verify_ssh is succeeded }}"
+            ok: "{{ verify_quorum.stdout | default('') is search('Flags:.*Qdevice') }}"
+            detail: ""
+          - check: Replication healthy
+            use: "{{ verify_ssh is succeeded and verify_replication | default(true) | bool }}"
+            ok: "{{ verify_repl.rc | default(1) == 0 and verify_bad_jobs | length == 0 }}"
+            detail: "{{ verify_jobs | length }} job(s) from this node{{ (' - failing: ' ~ verify_bad_jobs | join(',')) if verify_bad_jobs else '' }}"
+          - check: HA services healthy
+            use: "{{ verify_ssh is succeeded }}"
+            ok: "{{ verify_ha.stdout | default('') is search('quorum OK') and verify_ha_bad | length == 0 }}"
+            detail: "{{ verify_ha.stdout | default('') | regex_findall('service \\S+ \\(\\S+, started\\)') | length }} service(s) started"
+
+- name: Verify the mock servers
+  hosts: mock_servers
+  gather_facts: false
+  become: true
+  vars:
+    verify_sleep_targets:
+      - sleep.target
+      - suspend.target
+      - hibernate.target
+      - hybrid-sleep.target
+  tasks:
+    - name: Try to log in
+      ansible.builtin.wait_for_connection:
+        timeout: 15
+      register: verify_ssh
+      ignore_errors: true
+      ignore_unreachable: true
+
+    - name: Collect server state
+      when: verify_ssh is succeeded
+      block:
+        - name: List running containers
+          ansible.builtin.command:
+            cmd: docker ps --format '{{ "{{" }}.Names{{ "}}" }}'
+          register: verify_docker
+          changed_when: false
+          failed_when: false
+
+        - name: List listening TCP ports
+          ansible.builtin.command:
+            cmd: ss -Hltn
+          register: verify_ss
+          changed_when: false
+          failed_when: false
+
+        # A masked unit is a symlink to /dev/null in /etc/systemd/system.
+        - name: Look at the sleep targets
+          ansible.builtin.stat:
+            path: "/etc/systemd/system/{{ item }}"
+          loop: "{{ verify_sleep_targets }}"
+          register: verify_power
+
+        - name: Summarise the last 15 seconds of the SQL probe
+          ansible.builtin.command:
+            cmd: "sqlcheck-report {{ now().timestamp() | int - 15 }}"
+          register: verify_probe
+          changed_when: false
+          failed_when: false
+          when: "'shiraz_app' in group_names"
+
+    - name: Record the results
+      ansible.builtin.set_fact:
+        verify_results: "{{ verify_rows | selectattr('use') | list }}"
+      vars:
+        verify_running: "{{ verify_docker.stdout_lines | default([]) }}"
+        verify_listening: >-
+          {{ verify_ss.stdout_lines | default([]) | map('regex_search', ':(\d+)\s', '\1') | select | map('first') | map('int') | unique | list }}
+        verify_missing_containers: "{{ verify_containers | default([]) | difference(verify_running) }}"
+        verify_missing_ports: "{{ verify_ports | default([]) | difference(verify_listening) }}"
+        verify_probe_report: "{{ (verify_probe.stdout | default('{}', true)) | from_json }}"
+        verify_unmasked: >-
+          {{ verify_power.results | default([]) | rejectattr('stat.lnk_target', 'defined') | map(attribute='item') | list
+             + verify_power.results | default([]) | selectattr('stat.lnk_target', 'defined')
+               | rejectattr('stat.lnk_target', 'equalto', '/dev/null') | map(attribute='item') | list }}
+        verify_rows:
+          - check: SSH login
+            use: true
+            ok: "{{ verify_ssh is succeeded }}"
+            detail: ""
+          - check: Containers running
+            use: "{{ verify_ssh is succeeded }}"
+            ok: "{{ verify_docker.rc | default(1) == 0 and verify_missing_containers | length == 0 }}"
+            detail: >-
+              {{ ('missing: ' ~ verify_missing_containers | join(', ')) if verify_missing_containers
+                 else (verify_containers | default([]) | length ~ ' of ' ~ verify_containers | default([]) | length) }}
+          - check: Ports listening
+            use: "{{ verify_ssh is succeeded }}"
+            ok: "{{ verify_missing_ports | length == 0 }}"
+            detail: >-
+              {{ ('not listening: ' ~ verify_missing_ports | join(', ')) if verify_missing_ports
+                 else (verify_ports | default([]) | length ~ ' of ' ~ verify_ports | default([]) | length) }}
+          - check: Power management disabled
+            use: "{{ verify_ssh is succeeded }}"
+            ok: "{{ verify_unmasked | length == 0 }}"
+            detail: >-
+              {{ ('not masked: ' ~ verify_unmasked | join(', ')) if verify_unmasked
+                 else (verify_sleep_targets | length ~ ' sleep targets masked') }}
+          - check: "App to DB SQL connection"
+            use: "{{ verify_ssh is succeeded and 'shiraz_app' in group_names }}"
+            ok: "{{ verify_probe_report.samples | default(0) > 0 and verify_probe_report.fail | default(1) == 0 }}"
+            detail: "last 15 s: {{ verify_probe_report.pass | default(0) }} pass, {{ verify_probe_report.fail | default('?') }} fail"
+
+- name: Report
+  hosts: localhost
+  gather_facts: false
+  become: false
+  vars:
+    verify_hosts: "{{ (groups['nested_pve'] + groups['mock_servers']) | reject('in', verify_down_nodes | default([])) | list }}"
+    verify_table: |-
+      {% for host in verify_hosts %}
+      {% for row in hostvars[host].verify_results | default([{'check': 'No results collected', 'ok': false, 'detail': ''}]) %}
+      {{ 'PASS' if row.ok | bool else 'FAIL' }}  {{ '%-14s' | format(host) }} {{ '%-28s' | format(row.check) }} {{ row.detail }}
+      {% endfor %}
+      {% endfor %}
+  tasks:
+    - name: Show the summary
+      ansible.builtin.debug:
+        msg: "{{ verify_table.splitlines() | map('trim') | list }}"
+
+    - name: Fail if any check failed
+      ansible.builtin.assert:
+        that:
+          - "'FAIL' not in verify_table"
+        fail_msg: "{{ verify_table.splitlines() | select('match', '^FAIL') | list | length }} check(s) failed."
+        success_msg: All checks passed.

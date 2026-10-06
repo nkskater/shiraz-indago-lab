@@ -6,3 +6,18 @@ shiraz_app_db_address: "{{ hostvars[shiraz_database_host]['ansible_host'] }}"
 shiraz_app_db_name: "{{ shiraz_database_name }}"
 shiraz_app_db_user: "{{ shiraz_database_login }}"
 shiraz_app_db_password: "{{ vault_mssql_shiraz_svc_password }}"
+
+# --- What verify.yml expects on this server -------------------------------------
+verify_containers:
+  - indago-nginx-1
+  - indago-postgres-1
+  - indago-webui-1
+  - indago-sqlcheck-1
+verify_ports:
+  - 22
+  - 80
+  - 443
+  - 8080
+  - 8083
+  - 15432
+  - 15433
