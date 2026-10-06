@@ -182,3 +182,78 @@
   when:
     - pve_guest_start | bool
     - pve_guest__info.proxmox_vms | length > 0
+
+# --- Cloud-init drive --------------------------------------------------------
+
+- name: Remove the cloud-init drive now that first boot is done
+  when:
+    - pve_guest_remove_cloudinit_drive | bool
+    - pve_guest_start | bool
+    - pve_guest_cloudinit_drive in pve_guest__config
+  block:
+    - name: Disable cloud-init inside the guest
+      ansible.builtin.file:
+        path: /etc/cloud/cloud-init.disabled
+        state: touch
+        owner: root
+        group: root
+        mode: "0644"
+        modification_time: preserve
+        access_time: preserve
+      become: true
+
+    - name: Detach the drive with the guest shut down
+      delegate_to: localhost
+      become: false
+      module_defaults:
+        group/community.proxmox.proxmox: "{{ pve_guest_api }}"
+      block:
+        - name: Shut the guest down
+          community.proxmox.proxmox_kvm:
+            node: "{{ pve_guest__node }}"
+            vmid: "{{ pve_guest_vmid }}"
+            state: stopped
+            timeout: 180
+
+        # For an HA-managed guest the call above only files a request with the
+        # HA manager and returns at once, so check the real power state.
+        - name: Wait until the guest is really off
+          community.proxmox.proxmox_vm_info:
+            vmid: "{{ pve_guest_vmid }}"
+            type: qemu
+          register: pve_guest__power
+          until: pve_guest__power.proxmox_vms[0].status == 'stopped'
+          retries: 60
+          delay: 5
+
+        - name: Delete the cloud-init drive
+          community.proxmox.proxmox_kvm:
+            node: "{{ pve_guest__node }}"
+            vmid: "{{ pve_guest_vmid }}"
+            delete: "{{ pve_guest_cloudinit_drive }}"
+
+        - name: Start the guest again
+          community.proxmox.proxmox_kvm:
+            node: "{{ pve_guest__node }}"
+            vmid: "{{ pve_guest_vmid }}"
+            state: started
+            timeout: 180
+
+        - name: Wait until the guest is really running
+          community.proxmox.proxmox_vm_info:
+            vmid: "{{ pve_guest_vmid }}"
+            type: qemu
+          register: pve_guest__power
+          until: pve_guest__power.proxmox_vms[0].status == 'running'
+          retries: 60
+          delay: 5
+
+        - name: Wait for SSH to come back
+          ansible.builtin.wait_for:
+            host: "{{ pve_guest_ip }}"
+            port: 22
+            timeout: "{{ pve_guest_boot_timeout }}"
+
+    - name: Wait until Ansible can log in again
+      ansible.builtin.wait_for_connection:
+        timeout: "{{ pve_guest_boot_timeout }}"

@@ -42,6 +42,15 @@ pve_guest_search_domain: ""
 pve_guest_ci_user: ansible
 pve_guest_ssh_public_key: ""
 
+# Remove the cloud-init drive after the first boot has applied it. The drive
+# is a local volume that storage replication does not copy. If it is left in
+# place, an HA recovery on another node waits five minutes for a device that
+# is not there, and a later migration back fails on the stale copy. Guests
+# that are replicated between nodes should set this to true; cloud-init is
+# then disabled inside the guest first so it does not reconfigure anything.
+pve_guest_remove_cloudinit_drive: false
+pve_guest_cloudinit_drive: ide2
+
 # Lifecycle
 pve_guest_start: true
 pve_guest_clone_timeout: 900

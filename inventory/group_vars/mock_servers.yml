@@ -18,6 +18,9 @@ pve_guest_memory_mb: 6144
 pve_guest_cpu_type: x86-64-v2-AES
 pve_guest_onboot: true
 pve_guest_os_disk_size_gb: 15
+# These servers replicate between hosts and fail over, so they must not keep a
+# local-only cloud-init drive (see the role's defaults for what goes wrong).
+pve_guest_remove_cloudinit_drive: true
 pve_guest_prefix: "{{ lab_network_prefix }}"
 pve_guest_gateway: "{{ lab_gateway }}"
 pve_guest_nameservers: "{{ lab_nameservers }}"
