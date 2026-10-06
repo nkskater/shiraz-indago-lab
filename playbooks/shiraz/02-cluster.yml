@@ -1,0 +1,70 @@
+---
+# Phase 2 - turn the two nested hosts into a cluster with guest storage.
+#
+#   ansible-playbook playbooks/shiraz/02-cluster.yml
+#   ansible-playbook playbooks/shiraz/02-cluster.yml --skip-tags qdevice   # without the tiebreaker
+#
+# Safe to re-run; a second run reports no changes.
+
+- name: Form the cluster
+  hosts: nested_pve
+  gather_facts: false
+  become: true
+  tags: [cluster]
+  roles:
+    - role: pve_cluster
+
+# A two-node cluster loses quorum, and with it the ability to start or recover
+# guests, as soon as one node is down. The QDevice is a third vote that lives
+# outside both nodes.
+- name: Create the QDevice container on the physical node
+  hosts: qdevice
+  gather_facts: false
+  tags: [qdevice]
+  roles:
+    - role: pve_container
+
+- name: Install the QNet daemon on the witness
+  hosts: qdevice
+  gather_facts: false
+  tags: [qdevice]
+  tasks:
+    - name: Configure the witness
+      ansible.builtin.import_role:
+        name: pve_qdevice
+        tasks_from: witness
+
+- name: Add the QDevice vote to the cluster
+  hosts: nested_pve
+  gather_facts: false
+  become: true
+  tags: [qdevice]
+  tasks:
+    - name: Configure the cluster nodes
+      ansible.builtin.import_role:
+        name: pve_qdevice
+        tasks_from: node
+
+- name: Create guest storage on every node
+  hosts: nested_pve
+  gather_facts: false
+  become: true
+  tags: [storage]
+  roles:
+    - role: pve_zfs_storage
+
+- name: Create the lab pool and the Ansible API token
+  hosts: nested_pve[0]          # the primary node (see nested_primary)
+  gather_facts: false
+  become: true
+  tags: [access]
+  roles:
+    - role: pve_api_access
+
+- name: Build the Ubuntu cloud-init template
+  hosts: nested_pve[0]          # the primary node (see nested_primary)
+  gather_facts: false
+  become: true
+  tags: [template]
+  roles:
+    - role: pve_cloud_template

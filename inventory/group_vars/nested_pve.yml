@@ -41,3 +41,53 @@ pve_host_cluster_hosts: >-
   {{ dict(groups['nested_pve']
           | zip(groups['nested_pve'] | map('extract', hostvars, 'ansible_host')))
      | dict2items(key_name='name', value_name='address') }}
+
+# --- Cluster (role pve_cluster) ------------------------------------------------
+pve_cluster_name: "{{ nested_cluster_name }}"
+pve_cluster_primary: "{{ nested_primary }}"
+pve_cluster_api_password: "{{ vault_nested_root_password }}"
+
+# --- QDevice client side (role pve_qdevice) -------------------------------------
+pve_qdevice_witness: "{{ groups['qdevice'] | first }}"
+pve_qdevice_cluster_nodes: "{{ groups['nested_pve'] }}"
+pve_qdevice_primary: "{{ nested_primary }}"
+
+# --- Guest storage (role pve_zfs_storage) ---------------------------------------
+# The data disk is scsi1 of the nested host VM. Addressed by ID because the
+# kernel's sda/sdb order is not stable between boots.
+pve_zfs_storage_pool: "{{ nested_storage }}"
+pve_zfs_storage_device: /dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi1
+pve_zfs_storage_api: "{{ nested_admin_api }}"
+pve_zfs_storage_arc_max_bytes: 1073741824      # 1 GiB; the guests need the rest
+
+# --- API access for Ansible (role pve_api_access) --------------------------------
+pve_api_access_api: "{{ nested_admin_api }}"
+pve_api_access_pool: "{{ lab_pool }}"
+pve_api_access_pool_comment: indaGO Shiraz mock servers. Managed by Ansible (shiraz-indago-lab).
+pve_api_access_user: "{{ nested_api.api_user }}"
+pve_api_access_user_comment: shiraz-indago-lab Ansible
+pve_api_access_token_id: "{{ nested_api.api_token_id }}"
+pve_api_access_acls:
+  - { path: "/pool/{{ lab_pool }}", roleid: PVEVMAdmin }
+  - { path: "/storage/{{ nested_storage }}", roleid: PVEDatastoreUser }
+  - { path: /sdn/zones/localnetwork, roleid: PVESDNUser }
+  - { path: /, roleid: PVEAuditor }
+pve_api_access_secret_var: vault_nested_api_token_secret
+pve_api_access_secret_file: "{{ nested_api_secret_file }}"
+pve_api_access_vault_id: "{{ lab_vault_id }}"
+pve_api_access_vault_password_file: "{{ lab_vault_password_file }}"
+
+# --- Ubuntu 24.04 cloud template (role pve_cloud_template) ------------------------
+# Pinned to a dated build so re-runs never re-download a newer "current".
+pve_cloud_template_vmid: "{{ nested_template_vmid }}"
+pve_cloud_template_name: "{{ nested_template_name }}"
+pve_cloud_template_image_url: https://cloud-images.ubuntu.com/noble/20260926/noble-server-cloudimg-amd64.img
+pve_cloud_template_image_checksum: sha256:6a81c37564db9b1ee84e141922625e1d7c5b389b99bb3c572e0243607d5bb4d2
+pve_cloud_template_storage: "{{ nested_storage }}"
+pve_cloud_template_bridge: "{{ nested_bridge }}"
+pve_cloud_template_pool: "{{ lab_pool }}"
+pve_cloud_template_tags:
+  - "{{ lab_tag }}"
+pve_cloud_template_description: >-
+  Ubuntu 24.04 cloud-init template for the mock servers.
+  Managed by Ansible (shiraz-indago-lab).

@@ -1,0 +1,28 @@
+---
+# The witness is a minimal container: log in as root with the control node's
+# key (there is no sudo and no ansible user inside it).
+ansible_user: root
+ansible_become: false
+
+# --- Container definition on the physical node (role pve_container) -------------
+pve_container_api: "{{ physical_api }}"
+pve_container_node: "{{ physical_node }}"
+pve_container_ostemplate: local:vztmpl/debian-12-standard_12.12-1_amd64.tar.zst
+pve_container_storage: "{{ physical_storage }}"
+pve_container_bridge: "{{ physical_bridge }}"
+pve_container_prefix: "{{ lab_network_prefix }}"
+pve_container_gateway: "{{ lab_gateway }}"
+pve_container_nameserver: "{{ lab_nameservers | first }}"
+pve_container_search_domain: "{{ lab_domain }}"
+pve_container_root_public_key: "{{ lab_ansible_public_key }}"
+pve_container_pool: "{{ lab_pool }}"
+pve_container_tags:
+  - "{{ lab_tag }}"
+pve_container_description: >-
+  Quorum tiebreaker (corosync-qnetd) for the nested cluster.
+  Managed by Ansible (shiraz-indago-lab).
+
+# --- QDevice witness side (role pve_qdevice) -------------------------------------
+pve_qdevice_witness: "{{ inventory_hostname }}"
+pve_qdevice_cluster_nodes: "{{ groups['nested_pve'] }}"
+pve_qdevice_primary: "{{ nested_primary }}"
