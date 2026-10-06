@@ -1,0 +1,31 @@
+---
+# Connection to the Proxmox cluster (community.proxmox module parameters).
+pve_container_api: {}
+
+# Required
+pve_container_node: ""
+pve_container_vmid: 0
+pve_container_ostemplate: ""       # e.g. local:vztmpl/debian-12-standard_12.12-1_amd64.tar.zst
+pve_container_storage: ""
+pve_container_gateway: ""
+pve_container_root_public_key: ""  # SSH key allowed to log in as root
+
+pve_container_hostname: "{{ inventory_hostname }}"
+pve_container_description: Managed by Ansible.
+pve_container_pool: ""
+pve_container_tags: []
+
+pve_container_cores: 1
+pve_container_memory_mb: 512
+pve_container_swap_mb: 0
+pve_container_disk_gb: 4
+pve_container_unprivileged: true
+pve_container_onboot: false
+
+pve_container_bridge: vmbr0
+pve_container_ip: "{{ ansible_host }}"
+pve_container_prefix: 24
+pve_container_nameserver: ""
+pve_container_search_domain: ""
+
+pve_container_boot_timeout: 120

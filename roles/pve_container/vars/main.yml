@@ -1,0 +1,7 @@
+---
+# Internal values - not meant to be overridden.
+pve_container__exists: "{{ pve_container__lookup.proxmox_vms | default([]) | length > 0 }}"
+pve_container__net0: >-
+  name=eth0,bridge={{ pve_container_bridge }},ip={{ pve_container_ip }}/{{ pve_container_prefix }},gw={{ pve_container_gateway }}
+pve_container__current_tags: >-
+  {{ (pve_container__info.proxmox_vms | default([]) | first | default({})).tags | default('') }}

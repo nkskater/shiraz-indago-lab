@@ -1,0 +1,11 @@
+---
+galaxy_info:
+  author: nkskater
+  description: Create an LXC container on Proxmox VE through the API
+  license: Proprietary
+  min_ansible_version: "2.16"
+  platforms:
+    - name: Debian
+      versions:
+        - bookworm
+dependencies: []
