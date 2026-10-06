@@ -1,0 +1,39 @@
+-- Managed by Ansible (role shiraz_db). Safe to run repeatedly: every statement
+-- is guarded, and prints CHANGED only when it actually did something.
+SET NOCOUNT ON;
+
+IF DB_ID(N'{{ shiraz_db_database }}') IS NULL
+BEGIN
+    CREATE DATABASE [{{ shiraz_db_database }}];
+    PRINT 'CHANGED: database created';
+END
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.sql_logins WHERE name = N'{{ shiraz_db_login }}')
+BEGIN
+    CREATE LOGIN [{{ shiraz_db_login }}]
+        WITH PASSWORD = N'{{ shiraz_db_login_password | replace("'", "''") }}',
+             DEFAULT_DATABASE = [{{ shiraz_db_database }}],
+             CHECK_POLICY = ON,
+             CHECK_EXPIRATION = OFF;
+    PRINT 'CHANGED: login created';
+END
+GO
+
+IF EXISTS (SELECT 1 FROM sys.sql_logins WHERE name = N'{{ shiraz_db_login }}' AND is_expiration_checked = 1)
+BEGIN
+    ALTER LOGIN [{{ shiraz_db_login }}] WITH CHECK_EXPIRATION = OFF;
+    PRINT 'CHANGED: password expiration disabled';
+END
+GO
+
+USE [{{ shiraz_db_database }}];
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.database_principals WHERE name = N'{{ shiraz_db_login }}')
+BEGIN
+    CREATE USER [{{ shiraz_db_login }}] FOR LOGIN [{{ shiraz_db_login }}];
+    ALTER ROLE [db_owner] ADD MEMBER [{{ shiraz_db_login }}];
+    PRINT 'CHANGED: database user created';
+END
+GO

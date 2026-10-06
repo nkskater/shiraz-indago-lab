@@ -1,0 +1,73 @@
+---
+- name: Check required variables
+  ansible.builtin.assert:
+    that:
+      - shiraz_db_sa_password | length >= 8
+      - shiraz_db_login_password | length >= 8
+    fail_msg: Set shiraz_db_sa_password and shiraz_db_login_password (8+ characters, mixed classes).
+    quiet: true
+
+# --- Container ----------------------------------------------------------------
+
+- name: Create the data directory
+  ansible.builtin.file:
+    path: "{{ shiraz_db_data_dir }}"
+    state: directory
+    owner: "{{ shiraz_db_container_uid }}"
+    group: root
+    mode: "0770"
+
+- name: Run SQL Server
+  community.docker.docker_container:
+    name: "{{ shiraz_db_container_name }}"
+    image: "{{ shiraz_db_image }}"
+    state: started
+    restart_policy: unless-stopped
+    memory: "{{ shiraz_db_container_memory }}"
+    published_ports:
+      - "{{ shiraz_db_port }}:1433"
+    volumes:
+      - "{{ shiraz_db_data_dir }}:/var/opt/mssql"
+    env:
+      ACCEPT_EULA: "Y"
+      MSSQL_PID: "{{ shiraz_db_edition }}"
+      MSSQL_SA_PASSWORD: "{{ shiraz_db_sa_password }}"
+      MSSQL_MEMORY_LIMIT_MB: "{{ shiraz_db_engine_memory_mb | string }}"
+      TZ: "{{ shiraz_db_timezone }}"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - /opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P "$MSSQL_SA_PASSWORD" -b -Q "SELECT 1" || exit 1
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+  no_log: true      # the environment carries the sa password
+
+- name: Wait for SQL Server to accept logins
+  community.docker.docker_container_info:
+    name: "{{ shiraz_db_container_name }}"
+  register: shiraz_db__info
+  until: shiraz_db__info.container.State.Health.Status | default('') == 'healthy'
+  retries: 30
+  delay: 6
+
+# --- Database and login ---------------------------------------------------------
+
+- name: Create the application database and service login
+  community.docker.docker_container_exec:
+    container: "{{ shiraz_db_container_name }}"
+    argv:
+      - /opt/mssql-tools18/bin/sqlcmd
+      - -C
+      - -S
+      - localhost
+      - -U
+      - sa
+      - -b
+    env:
+      SQLCMDPASSWORD: "{{ shiraz_db_sa_password }}"
+    stdin: "{{ lookup('ansible.builtin.template', 'init.sql.j2') }}"
+  register: shiraz_db__init
+  changed_when: "'CHANGED' in shiraz_db__init.stdout"
+  no_log: true      # stdin and env carry passwords

@@ -1,0 +1,23 @@
+---
+shiraz_db_image: mcr.microsoft.com/mssql/server:2022-latest
+shiraz_db_container_name: mssql
+shiraz_db_port: 1433
+shiraz_db_data_dir: /data/mssql
+shiraz_db_edition: Developer            # MSSQL_PID; free for non-production use
+shiraz_db_timezone: America/New_York
+
+# Memory: the VM has 6 GB. The container may use 4 GB in total and the database
+# engine is told to stay within 3 GB of that, leaving room for the OS and Docker.
+shiraz_db_container_memory: 4g
+shiraz_db_engine_memory_mb: 3072
+
+# Required secrets
+shiraz_db_sa_password: ""
+shiraz_db_login_password: ""
+
+# Application database and its service login (password never expires).
+shiraz_db_database: indago_mock
+shiraz_db_login: shiraz_svc
+
+# The mssql user inside the image.
+shiraz_db_container_uid: 10001

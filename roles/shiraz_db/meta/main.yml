@@ -1,0 +1,12 @@
+---
+galaxy_info:
+  author: nkskater
+  description: SQL Server 2022 in a container, standing in for the Windows database server
+  license: Proprietary
+  min_ansible_version: "2.16"
+  platforms:
+    - name: Ubuntu
+      versions:
+        - noble
+dependencies:
+  - role: docker
