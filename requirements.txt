@@ -1,0 +1,5 @@
+# Python libraries needed on the control node by community.proxmox.
+# Install into the pipx-managed Ansible venv:
+#   pipx runpip ansible install -r requirements.txt
+proxmoxer>=2.2
+requests>=2.31

@@ -1,0 +1,3 @@
+---
+# API modules run here and need proxmoxer, which lives in the Ansible venv.
+ansible_python_interpreter: "{{ ansible_playbook_python }}"

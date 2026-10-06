@@ -1,0 +1,43 @@
+---
+# --- VM definition on the physical node (role pve_guest) ---------------------
+pve_guest_api: "{{ physical_api }}"
+pve_guest_node: "{{ physical_node }}"
+pve_guest_template_vmid: "{{ physical_template_vmid }}"
+pve_guest_template_name: "{{ physical_template_name }}"
+pve_guest_storage: "{{ physical_storage }}"
+pve_guest_pool: "{{ lab_pool }}"
+pve_guest_tags:
+  - "{{ lab_tag }}"
+pve_guest_description: >-
+  Nested Proxmox VE host for the indaGO Shiraz mock lab.
+  Managed by Ansible (shiraz-indago-lab).
+
+# Sizing: either host must hold both 6 GiB mock servers during a drain or
+# failover, plus PVE itself and a 1 GiB ZFS ARC.
+pve_guest_cores: 4
+pve_guest_memory_mb: 16384
+pve_guest_cpu_type: host        # passes VT-x through so the host can run KVM guests
+pve_guest_onboot: false         # the lab is started on demand, not with the node
+pve_guest_os_disk_size_gb: 32
+pve_guest_extra_disks:
+  - { disk: scsi1, size_gb: 64, backup: false }   # guest storage (ZFS pool)
+
+pve_guest_prefix: "{{ lab_network_prefix }}"
+pve_guest_gateway: "{{ lab_gateway }}"
+pve_guest_nameservers: "{{ lab_nameservers }}"
+pve_guest_search_domain: "{{ lab_domain }}"
+pve_guest_ci_user: "{{ lab_ansible_user }}"
+pve_guest_ssh_public_key: "{{ lab_ansible_public_key }}"
+
+# --- Proxmox VE installation (role pve_host) ---------------------------------
+pve_host_domain: "{{ lab_domain }}"
+pve_host_prefix: "{{ lab_network_prefix }}"
+pve_host_gateway: "{{ lab_gateway }}"
+pve_host_nameservers: "{{ lab_nameservers }}"
+pve_host_timezone: "{{ lab_timezone }}"
+pve_host_root_password_hash: "{{ vault_nested_root_password_hash }}"
+# Every cluster member, for /etc/hosts on each node.
+pve_host_cluster_hosts: >-
+  {{ dict(groups['nested_pve']
+          | zip(groups['nested_pve'] | map('extract', hostvars, 'ansible_host')))
+     | dict2items(key_name='name', value_name='address') }}

@@ -1,0 +1,22 @@
+---
+# --- Debian 13 cloud template (role pve_cloud_template) ----------------------
+# Pinned to a dated build so re-runs never re-download a newer "latest".
+pve_cloud_template_vmid: "{{ physical_template_vmid }}"
+pve_cloud_template_name: "{{ physical_template_name }}"
+pve_cloud_template_image_url: >-
+  https://cloud.debian.org/images/cloud/trixie/20261001-2618/debian-13-genericcloud-amd64-20261001-2618.qcow2
+pve_cloud_template_image_checksum: >-
+  sha512:f46f0671a6e5bdec5291ab8972bae2f10e5408c2f64a74078f11efc2f06a436a9d0313ed50e0472542eeabf780e9f7c792ac0a314c6c20507fcd9fd81b468c3d
+# The source image is kept on ZFS in its own dataset, not on the root disk.
+pve_cloud_template_zfs_dataset: "{{ physical_storage }}/shiraz-mock"
+pve_cloud_template_image_dir: "/{{ physical_storage }}/shiraz-mock"
+pve_cloud_template_storage: "{{ physical_storage }}"
+pve_cloud_template_bridge: "{{ physical_bridge }}"
+pve_cloud_template_pool: "{{ lab_pool }}"
+pve_cloud_template_tags:
+  - "{{ lab_tag }}"
+# Keep lab disks out of the node's nightly "back up everything" job.
+pve_cloud_template_disk_backup: false
+pve_cloud_template_description: >-
+  Debian 13 cloud-init template for the nested PVE hosts.
+  Managed by Ansible (shiraz-indago-lab).

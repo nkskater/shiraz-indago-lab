@@ -1,0 +1,17 @@
+# Vault passwords and local secrets - never commit
+.vault_pass*
+*vault_pass*
+*.vault_pass
+.secrets/
+*.secret
+*.pem
+*.key
+
+# Ansible runtime
+*.retry
+.ansible/
+facts/
+
+# Python
+.venv/
+__pycache__/

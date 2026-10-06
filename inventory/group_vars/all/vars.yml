@@ -1,0 +1,40 @@
+---
+ansible_python_interpreter: /usr/bin/python3
+
+# --- Lab identity -----------------------------------------------------------
+# Every resource this repo creates carries this tag and sits in this pool.
+# destroy.yml refuses to touch anything that does not.
+lab_tag: shiraz-mock
+lab_pool: shiraz-mock
+lab_domain: shiraz.internal
+lab_timezone: America/New_York
+
+# --- Network ----------------------------------------------------------------
+lab_network_prefix: 24
+lab_gateway: 192.168.1.1
+lab_nameservers:
+  - 192.168.1.1
+
+# --- Access -----------------------------------------------------------------
+# Cloud-init creates this user with the control node's key on every lab machine.
+lab_ansible_user: ansible
+lab_ansible_public_key: "{{ lookup('ansible.builtin.file', '~/.ssh/ansible.pub') }}"
+
+# --- Physical Proxmox API ---------------------------------------------------
+# Keys match the community.proxmox module parameters so the whole dict can be
+# handed to module_defaults.
+physical_node: proxmox
+physical_api:
+  api_host: 192.168.1.10
+  api_user: ansible-shiraz@pve
+  api_token_id: ansible
+  api_token_secret: "{{ vault_physical_api_token_secret }}"
+  validate_certs: false   # the node uses Proxmox's self-signed certificate
+
+# --- Templates --------------------------------------------------------------
+# Debian 13 cloud-init template on the physical node; the nested PVE hosts are
+# cloned from it.
+physical_template_vmid: 9100
+physical_template_name: debian13-cloud-tmpl
+physical_storage: zfspool
+physical_bridge: vmbr0

@@ -1,0 +1,15 @@
+---
+# Layout of inventory/group_vars/all/vault.yml (the real file is encrypted).
+# This copy is documentation only; Ansible does not load it.
+# Create or edit it with:
+#   ansible-vault edit inventory/group_vars/all/vault.yml
+#
+# Password hashes: openssl passwd -6
+vault_physical_api_token_secret: "token secret printed by 'pveum user token add'"
+vault_nested_root_password: "root password for shiraz-pve-a and shiraz-pve-b"
+vault_nested_root_password_hash: "sha512-crypt hash of the line above"
+vault_dmwh_admin_password: "password for the dmwh-admin account on the mock servers"
+vault_dmwh_admin_password_hash: "sha512-crypt hash of the line above"
+vault_mssql_sa_password: "SQL Server sa password (upper, lower, digit, symbol)"
+vault_mssql_shiraz_svc_password: "password for the shiraz_svc SQL login"
+vault_postgres_password: "Postgres superuser password on shiraz-app"
