@@ -8,6 +8,10 @@ shiraz_app_postgres_image: postgres:16-alpine
 shiraz_app_adminer_image: adminer:latest
 shiraz_app_sqlcheck_image: mcr.microsoft.com/mssql-tools:latest
 
+# missing = use local images; always = check the registry for newer ones
+# (maintenance.yml sets this to refresh the stack).
+shiraz_app_image_pull: missing
+
 # Ports from the server spec.
 shiraz_app_http_ports:
   - 80

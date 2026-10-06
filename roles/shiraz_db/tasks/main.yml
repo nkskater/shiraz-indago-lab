@@ -21,6 +21,7 @@
   community.docker.docker_container:
     name: "{{ shiraz_db_container_name }}"
     image: "{{ shiraz_db_image }}"
+    pull: "{{ shiraz_db_image_pull }}"
     state: started
     restart_policy: unless-stopped
     memory: "{{ shiraz_db_container_memory }}"

@@ -1,0 +1,62 @@
+#!/usr/bin/env python3
+# Managed by Ansible (role shiraz_app)
+"""Summarise the SQL probe log for a time window, as JSON.
+
+usage: sqlcheck-report SINCE_EPOCH [UNTIL_EPOCH]
+
+downtime_seconds is measured from the last PASS before the first FAIL to the
+first PASS after the last FAIL, i.e. how long the database was unreachable
+from this server. max_gap_seconds is the longest silence between two log
+lines; a large value means the probe itself was paused (for example while
+this VM was being migrated).
+"""
+import datetime
+import json
+import sys
+
+LOG = "{{ shiraz_app_dir }}/logs/sqlcheck.log"
+
+
+def main():
+    since = float(sys.argv[1])
+    until = float(sys.argv[2]) if len(sys.argv) > 2 else float("inf")
+    rows = []
+    with open(LOG, encoding="utf-8", errors="replace") as handle:
+        for line in handle:
+            parts = line.split(None, 2)
+            if len(parts) < 2 or parts[1] not in ("PASS", "FAIL"):
+                continue
+            try:
+                stamp = datetime.datetime.fromisoformat(parts[0]).timestamp()
+            except ValueError:
+                continue
+            if since <= stamp <= until:
+                rows.append((stamp, parts[0], parts[1]))
+
+    fails = [i for i, row in enumerate(rows) if row[2] == "FAIL"]
+    report = {
+        "samples": len(rows),
+        "pass": len(rows) - len(fails),
+        "fail": len(fails),
+        "first_fail": None,
+        "last_fail": None,
+        "recovered": None,
+        "downtime_seconds": 0,
+        "max_gap_seconds": round(max((b[0] - a[0] for a, b in zip(rows, rows[1:])), default=0), 1),
+        "last_line": " ".join(rows[-1][1:]) if rows else None,
+    }
+    if fails:
+        first, last = fails[0], fails[-1]
+        start = rows[first - 1][0] if first > 0 else rows[first][0]
+        report["first_fail"] = rows[first][1]
+        report["last_fail"] = rows[last][1]
+        if last + 1 < len(rows):
+            report["recovered"] = rows[last + 1][1]
+            report["downtime_seconds"] = round(rows[last + 1][0] - start, 1)
+        else:
+            report["downtime_seconds"] = round(rows[last][0] - start, 1)
+    print(json.dumps(report))
+
+
+if __name__ == "__main__":
+    main()

@@ -1,5 +1,8 @@
 ---
 shiraz_db_image: mcr.microsoft.com/mssql/server:2022-latest
+# missing = use the local image; always = check the registry for a newer one
+# (maintenance.yml sets this to refresh the server).
+shiraz_db_image_pull: missing
 shiraz_db_container_name: mssql
 shiraz_db_port: 1433
 shiraz_db_data_dir: /data/mssql

@@ -78,6 +78,14 @@
     mode: "0755"
   notify: Restart sqlcheck
 
+- name: Install the probe report tool
+  ansible.builtin.template:
+    src: sqlcheck-report.py.j2
+    dest: /usr/local/bin/sqlcheck-report
+    owner: root
+    group: root
+    mode: "0755"
+
 - name: Rotate the probe log
   ansible.builtin.template:
     src: logrotate.j2
@@ -108,6 +116,7 @@
 - name: Start the stack
   community.docker.docker_compose_v2:
     project_src: "{{ shiraz_app_dir }}"
+    pull: "{{ shiraz_app_image_pull }}"
     state: present
 
 - name: Restart services whose mounted files changed
