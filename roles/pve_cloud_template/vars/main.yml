@@ -1,0 +1,38 @@
+---
+# Internal values - not meant to be overridden.
+pve_cloud_template__image: >-
+  {{ pve_cloud_template_image_dir }}/{{ pve_cloud_template_image_url | basename }}
+
+# The cluster resource entry for our VMID, or an empty dict.
+pve_cloud_template__existing: >-
+  {{ pve_cloud_template__resources.stdout | default('[]') | from_json
+     | selectattr('vmid', 'equalto', pve_cloud_template_vmid | int)
+     | first | default({}) }}
+
+pve_cloud_template__disk: >-
+  {{ pve_cloud_template_storage }}:0,import-from={{ pve_cloud_template__image }},{{
+     pve_cloud_template_disk_options }}{{
+     '' if pve_cloud_template_disk_backup | bool else ',backup=0' }}
+
+pve_cloud_template__net: >-
+  virtio,bridge={{ pve_cloud_template_bridge }},firewall={{
+     pve_cloud_template_nic_firewall | bool | ternary('1', '0') }}
+
+pve_cloud_template__create_argv: >-
+  {{ ['qm', 'create', pve_cloud_template_vmid | string,
+      '--name', pve_cloud_template_name,
+      '--description', pve_cloud_template_description,
+      '--ostype', 'l26',
+      '--machine', pve_cloud_template_machine,
+      '--cpu', pve_cloud_template_cpu,
+      '--cores', pve_cloud_template_cores | string,
+      '--memory', pve_cloud_template_memory_mb | string,
+      '--scsihw', 'virtio-scsi-single',
+      '--scsi0', pve_cloud_template__disk,
+      '--ide2', pve_cloud_template_storage ~ ':cloudinit',
+      '--boot', 'order=scsi0',
+      '--serial0', 'socket',
+      '--agent', 'enabled=1',
+      '--net0', pve_cloud_template__net]
+     + (['--pool', pve_cloud_template_pool] if pve_cloud_template_pool | length > 0 else [])
+     + (['--tags', pve_cloud_template_tags | join(';')] if pve_cloud_template_tags | length > 0 else []) }}

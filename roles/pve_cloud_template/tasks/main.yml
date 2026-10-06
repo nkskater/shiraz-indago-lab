@@ -1,0 +1,70 @@
+---
+# Runs on a Proxmox VE node as root. Importing a disk image from a file path is
+# a root-only operation in Proxmox, which is why this role uses qm over SSH
+# instead of the API.
+
+- name: Check required variables
+  ansible.builtin.assert:
+    that:
+      - pve_cloud_template_vmid | int > 0
+      - pve_cloud_template_name | length > 0
+      - pve_cloud_template_image_url | length > 0
+      - pve_cloud_template_image_checksum | length > 0
+      - pve_cloud_template_storage | length > 0
+    quiet: true
+
+# --- Source image -----------------------------------------------------------
+
+- name: Create a ZFS dataset for the source image
+  community.general.zfs:
+    name: "{{ pve_cloud_template_zfs_dataset }}"
+    state: present
+  when: pve_cloud_template_zfs_dataset | length > 0
+
+- name: Ensure the image directory exists
+  ansible.builtin.file:
+    path: "{{ pve_cloud_template_image_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Download the cloud image
+  ansible.builtin.get_url:
+    url: "{{ pve_cloud_template_image_url }}"
+    dest: "{{ pve_cloud_template__image }}"
+    checksum: "{{ pve_cloud_template_image_checksum }}"
+    owner: root
+    group: root
+    mode: "0644"
+
+# --- Template VM ------------------------------------------------------------
+
+- name: List existing guests in the cluster
+  ansible.builtin.command:
+    cmd: pvesh get /cluster/resources --type vm --output-format json
+  register: pve_cloud_template__resources
+  changed_when: false
+  check_mode: false
+
+- name: Refuse to reuse a VMID that belongs to something else
+  ansible.builtin.assert:
+    that:
+      - pve_cloud_template__existing.name == pve_cloud_template_name
+    fail_msg: >-
+      VMID {{ pve_cloud_template_vmid }} is already used by
+      '{{ pve_cloud_template__existing.name | default('?') }}'. Not touching it.
+    quiet: true
+  when: pve_cloud_template__existing | length > 0
+
+- name: Create the VM from the cloud image
+  ansible.builtin.command:
+    argv: "{{ pve_cloud_template__create_argv }}"
+  when: pve_cloud_template__existing | length == 0
+  changed_when: true
+
+- name: Convert the VM to a template
+  ansible.builtin.command:
+    cmd: "qm template {{ pve_cloud_template_vmid }}"
+  when: pve_cloud_template__existing.template | default(0) | int != 1
+  changed_when: true

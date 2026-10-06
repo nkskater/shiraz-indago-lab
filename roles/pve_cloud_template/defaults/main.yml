@@ -1,0 +1,27 @@
+---
+# Required
+pve_cloud_template_vmid: 0
+pve_cloud_template_name: ""
+pve_cloud_template_image_url: ""
+pve_cloud_template_image_checksum: ""    # e.g. sha512:<hex>
+pve_cloud_template_storage: ""           # Proxmox storage ID for the template disk
+
+# Where the downloaded image is kept on the node. If a ZFS dataset is named it
+# is created first; image_dir should then be its mountpoint.
+pve_cloud_template_zfs_dataset: ""
+pve_cloud_template_image_dir: /var/lib/vz/template/cloud-images
+
+# Virtual hardware of the template. Clones inherit all of it.
+pve_cloud_template_machine: q35
+pve_cloud_template_cpu: x86-64-v2-AES
+pve_cloud_template_cores: 2
+pve_cloud_template_memory_mb: 2048
+pve_cloud_template_bridge: vmbr0
+pve_cloud_template_nic_firewall: false
+pve_cloud_template_disk_options: discard=on,ssd=1,iothread=1
+pve_cloud_template_disk_backup: true
+
+# Proxmox organisation
+pve_cloud_template_pool: ""
+pve_cloud_template_tags: []
+pve_cloud_template_description: Cloud-init template. Managed by Ansible.
