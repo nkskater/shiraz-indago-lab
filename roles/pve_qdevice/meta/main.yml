@@ -1,0 +1,11 @@
+---
+galaxy_info:
+  author: nkskater
+  description: Add an external corosync QDevice vote to a two-node Proxmox VE cluster
+  license: Proprietary
+  min_ansible_version: "2.16"
+  platforms:
+    - name: Debian
+      versions:
+        - trixie
+dependencies: []

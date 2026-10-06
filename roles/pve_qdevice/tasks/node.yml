@@ -1,0 +1,47 @@
+---
+- name: Install the corosync QDevice client
+  ansible.builtin.apt:
+    name: corosync-qdevice
+    state: present
+
+- name: Read the witness's SSH host key
+  ansible.builtin.command:
+    cmd: "ssh-keyscan -t ed25519 {{ pve_qdevice_address }}"
+  register: pve_qdevice__hostkey
+  changed_when: false
+  check_mode: false
+
+- name: Trust the witness's SSH host key
+  ansible.builtin.known_hosts:
+    name: "{{ pve_qdevice_address }}"
+    key: "{{ pve_qdevice__hostkey.stdout_lines | select('match', '^[^#]') | first }}"
+    path: /root/.ssh/known_hosts
+    state: present
+
+- name: Read the cluster's quorum state
+  ansible.builtin.command:
+    cmd: pvecm status
+  register: pve_qdevice__before
+  changed_when: false
+  check_mode: false
+
+- name: Register the QDevice with the cluster
+  ansible.builtin.command:
+    cmd: "pvecm qdevice setup {{ pve_qdevice_address }}"
+  when:
+    - inventory_hostname == pve_qdevice_primary
+    - "'Qdevice' not in pve_qdevice__before.stdout"
+  changed_when: true
+
+- name: Wait for the QDevice vote to count
+  ansible.builtin.command:
+    cmd: pvecm status
+  register: pve_qdevice__after
+  changed_when: false
+  check_mode: false
+  until:
+    - pve_qdevice__after.stdout is search('Expected votes:\s+' ~ pve_qdevice_expected_votes ~ '\s')
+    - pve_qdevice__after.stdout is search('Total votes:\s+' ~ pve_qdevice_expected_votes ~ '\s')
+    - pve_qdevice__after.stdout is search('Flags:.*Qdevice')
+  retries: 24
+  delay: 5

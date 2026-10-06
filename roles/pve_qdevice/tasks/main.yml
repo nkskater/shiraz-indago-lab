@@ -1,0 +1,7 @@
+---
+# This role has two entry points, used from two plays:
+#   tasks_from: witness   on the machine that provides the extra vote
+#   tasks_from: node      on the cluster nodes
+- name: Explain how to use this role
+  ansible.builtin.fail:
+    msg: "Use the role with tasks_from: witness or tasks_from: node."

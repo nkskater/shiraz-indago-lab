@@ -1,0 +1,9 @@
+---
+# Required
+pve_qdevice_witness: ""           # inventory hostname of the machine running corosync-qnetd
+pve_qdevice_cluster_nodes: []     # inventory hostnames of the cluster nodes
+pve_qdevice_primary: ""           # cluster node that runs "pvecm qdevice setup"
+
+pve_qdevice_address: "{{ hostvars[pve_qdevice_witness]['ansible_host'] }}"
+# Votes once the QDevice counts: one per node plus one.
+pve_qdevice_expected_votes: "{{ pve_qdevice_cluster_nodes | length + 1 }}"

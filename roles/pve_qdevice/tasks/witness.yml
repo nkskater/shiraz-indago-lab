@@ -1,0 +1,40 @@
+---
+# Runs on the witness as root. Minimal container images ship without Python,
+# so the first task uses raw and the play must not gather facts.
+
+- name: Make sure Python is available for Ansible
+  ansible.builtin.raw: command -v python3 >/dev/null || (apt-get update && apt-get install -y python3)
+  register: pve_qdevice__python
+  changed_when: "'Setting up python3' in pve_qdevice__python.stdout"
+
+- name: Install the corosync QNet daemon
+  ansible.builtin.apt:
+    name: corosync-qnetd
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Ensure the QNet daemon is running and enabled at boot
+  ansible.builtin.service:
+    name: corosync-qnetd
+    state: started
+    enabled: true
+
+# "pvecm qdevice setup" logs in here as root from a cluster node to exchange
+# certificates, so every node's root key must be accepted.
+- name: Read each cluster node's root public key
+  ansible.builtin.slurp:
+    src: /root/.ssh/id_rsa.pub
+  delegate_to: "{{ item }}"
+  become: true
+  loop: "{{ pve_qdevice_cluster_nodes }}"
+  register: pve_qdevice__node_keys
+
+- name: Authorize the cluster nodes to log in as root
+  ansible.posix.authorized_key:
+    user: root
+    key: "{{ item.content | b64decode | trim }}"
+    state: present
+  loop: "{{ pve_qdevice__node_keys.results }}"
+  loop_control:
+    label: "{{ item.item }}"
