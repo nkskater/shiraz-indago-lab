@@ -1,0 +1,102 @@
+---
+- name: Protect the guest with replication and HA
+  delegate_to: "{{ pve_replication_cluster_node }}"
+  become: true
+  block:
+    - name: Check required variables
+      ansible.builtin.assert:
+        that:
+          - pve_replication_vmid | int > 0
+          - pve_replication_cluster_node | length > 0
+          - pve_replication_nodes | length > 1
+        quiet: true
+
+    - name: Find the node the guest is on
+      ansible.builtin.command:
+        cmd: pvesh get /cluster/resources --type vm --output-format json
+      register: pve_replication__resources
+      changed_when: false
+      check_mode: false
+
+    # --- Replication ---------------------------------------------------------
+
+    - name: List replication jobs
+      ansible.builtin.command:
+        cmd: pvesh get /cluster/replication --output-format json
+      register: pve_replication__jobs
+      changed_when: false
+      check_mode: false
+
+    # A job follows its guest: after a migration Proxmox reverses its direction
+    # by itself, so an existing job is left alone whatever its current target.
+    - name: Create a replication job to each other node
+      ansible.builtin.command:
+        argv:
+          - pvesr
+          - create-local-job
+          - "{{ pve_replication_vmid }}-{{ index }}"
+          - "{{ item }}"
+          - --schedule
+          - "{{ pve_replication_schedule }}"
+      loop: "{{ pve_replication__targets }}"
+      loop_control:
+        index_var: index
+      when: (pve_replication_vmid ~ '-' ~ index) not in pve_replication__job_ids
+      changed_when: true
+
+    # Do not wait for the schedule: the guest is unprotected until the first sync.
+    - name: Start the first replication of a new job now
+      ansible.builtin.command:
+        cmd: "pvesr schedule-now {{ pve_replication_vmid }}-{{ index }}"
+      loop: "{{ pve_replication__targets }}"
+      loop_control:
+        index_var: index
+      when: (pve_replication_vmid ~ '-' ~ index) not in pve_replication__job_ids
+      changed_when: true
+
+    - name: Wait for the guest's replication to be healthy
+      ansible.builtin.command:
+        cmd: "pvesh get /nodes/{{ pve_replication__guest.node }}/replication --guest {{ pve_replication_vmid }} --output-format json"
+      register: pve_replication__status
+      changed_when: false
+      check_mode: false
+      until:
+        - pve_replication__jobs_now | length == pve_replication__targets | length
+        - pve_replication__jobs_synced | length == pve_replication__targets | length
+        - pve_replication__jobs_failing | length == 0
+      retries: "{{ (pve_replication_first_sync_timeout | int / 10) | int }}"
+      delay: 10
+
+    # --- High availability -----------------------------------------------------
+
+    - name: List HA resources
+      ansible.builtin.command:
+        cmd: pvesh get /cluster/ha/resources --output-format json
+      register: pve_replication__ha
+      changed_when: false
+      check_mode: false
+
+    - name: Put the guest under HA management
+      ansible.builtin.command:
+        argv:
+          - ha-manager
+          - add
+          - "vm:{{ pve_replication_vmid }}"
+          - --state
+          - started
+          - --max_restart
+          - "{{ pve_replication_ha_max_restart }}"
+          - --max_relocate
+          - "{{ pve_replication_ha_max_relocate }}"
+      when:
+        - pve_replication_ha | bool
+        - ('vm:' ~ pve_replication_vmid) not in pve_replication__ha_sids
+      changed_when: true
+
+    - name: Take the guest out of HA management
+      ansible.builtin.command:
+        cmd: "ha-manager remove vm:{{ pve_replication_vmid }}"
+      when:
+        - not pve_replication_ha | bool
+        - ('vm:' ~ pve_replication_vmid) in pve_replication__ha_sids
+      changed_when: true

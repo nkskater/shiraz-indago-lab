@@ -1,0 +1,21 @@
+---
+# Internal values - not meant to be overridden.
+pve_replication__guest: >-
+  {{ pve_replication__resources.stdout | from_json
+     | selectattr('vmid', 'equalto', pve_replication_vmid | int) | first }}
+
+# Replication targets: every cluster node the guest is not currently on.
+pve_replication__targets: "{{ pve_replication_nodes | difference([pve_replication__guest.node]) }}"
+
+pve_replication__job_ids: >-
+  {{ pve_replication__jobs.stdout | from_json | map(attribute='id') | list }}
+
+pve_replication__ha_sids: >-
+  {{ pve_replication__ha.stdout | from_json | map(attribute='sid') | list }}
+
+# Live state of the guest's replication jobs, as reported by its node.
+pve_replication__jobs_now: "{{ pve_replication__status.stdout | default('[]') | from_json }}"
+pve_replication__jobs_synced: >-
+  {{ pve_replication__jobs_now | selectattr('last_sync', 'defined') | selectattr('last_sync', 'gt', 0) | list }}
+pve_replication__jobs_failing: >-
+  {{ pve_replication__jobs_now | selectattr('fail_count', 'defined') | selectattr('fail_count', 'gt', 0) | list }}

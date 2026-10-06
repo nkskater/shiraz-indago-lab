@@ -1,0 +1,18 @@
+---
+# Runs once per guest (inventory host); the commands execute on a cluster node.
+
+# Required
+pve_replication_vmid: 0
+pve_replication_cluster_node: ""     # inventory hostname of a cluster node to run pvesr/ha-manager on
+pve_replication_nodes: []            # all cluster node names; the guest replicates to the ones it is not on
+
+# Calendar event in Proxmox syntax. "*/5" = every five minutes. This interval
+# is the most data a host failure can lose.
+pve_replication_schedule: "*/5"
+
+# High availability: restart the guest on a surviving node after a host failure.
+pve_replication_ha: true
+pve_replication_ha_max_restart: 1
+pve_replication_ha_max_relocate: 1
+
+pve_replication_first_sync_timeout: 600
