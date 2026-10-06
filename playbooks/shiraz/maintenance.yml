@@ -1,0 +1,137 @@
+---
+# Routine maintenance of the mock servers, one server at a time: OS updates,
+# newer container images, clean-up, and a reboot if the updates need one.
+# Stands in for the vendor spec's daily 30-minute maintenance window.
+#
+#   ansible-playbook playbooks/shiraz/maintenance.yml
+#   ansible-playbook playbooks/shiraz/maintenance.yml -e maintenance_reboot=never
+#
+#   maintenance_reboot          if-required (default), always or never
+#   maintenance_window_minutes  budget to compare the run against (default 30)
+#
+# Servers are handled in inventory order (database first), and the next one is
+# not touched until the current one is healthy again.
+
+- name: Note when the window opens
+  hosts: localhost
+  gather_facts: false
+  become: false
+  tasks:
+    - name: Record the start time
+      ansible.builtin.set_fact:
+        maintenance_started: "{{ now().timestamp() }}"
+
+- name: Maintain the mock servers one at a time
+  hosts: mock_servers
+  order: inventory
+  serial: 1
+  gather_facts: true
+  become: true
+  vars:
+    maintenance_reboot: if-required
+  tasks:
+    - name: Record when work on this server starts
+      ansible.builtin.set_fact:
+        maintenance_host_started: "{{ now().timestamp() }}"
+
+    # --- Operating system -----------------------------------------------------
+    - name: Install pending package updates
+      ansible.builtin.apt:
+        upgrade: dist
+        update_cache: true
+      register: maintenance_apt
+
+    - name: Remove packages that are no longer needed
+      ansible.builtin.apt:
+        autoremove: true
+        purge: true
+
+    - name: Check whether the updates ask for a reboot
+      ansible.builtin.stat:
+        path: /var/run/reboot-required
+      register: maintenance_reboot_flag
+
+    - name: Reboot the server
+      ansible.builtin.reboot:
+        reboot_timeout: 600
+      register: maintenance_rebooted
+      when: >-
+        maintenance_reboot == 'always'
+        or (maintenance_reboot == 'if-required' and maintenance_reboot_flag.stat.exists)
+
+    # --- Containers -----------------------------------------------------------
+    # Re-applying the role with "always" pulls newer images and recreates only
+    # the containers whose image changed.
+    - name: Refresh the database container
+      ansible.builtin.include_role:
+        name: shiraz_db
+      vars:
+        shiraz_db_image_pull: always
+      when: "'shiraz_db' in group_names"
+
+    - name: Refresh the application stack
+      ansible.builtin.include_role:
+        name: shiraz_app
+      vars:
+        shiraz_app_image_pull: always
+      when: "'shiraz_app' in group_names"
+
+    - name: Remove unused images and build cache
+      community.docker.docker_prune:
+        images: true
+        images_filters:
+          dangling: false
+        builder_cache: true
+
+    # --- Health gate ------------------------------------------------------------
+    - name: List running containers
+      ansible.builtin.command:
+        cmd: docker ps --format '{{ "{{" }}.Names{{ "}}" }}'
+      register: maintenance_docker
+      changed_when: false
+      until: verify_containers | default([]) | difference(maintenance_docker.stdout_lines) | length == 0
+      retries: 30
+      delay: 5
+
+    - name: Wait for the expected ports to listen
+      ansible.builtin.wait_for:
+        port: "{{ item }}"
+        timeout: 300
+      loop: "{{ verify_ports | default([]) }}"
+
+    - name: Report the time spent on this server
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }} done in
+          {{ ((now().timestamp() - maintenance_host_started | float) / 60) | round(1) }} min
+          (packages {{ 'updated' if maintenance_apt is changed else 'already current' }},
+          {{ 'rebooted' if maintenance_rebooted is changed else 'no reboot' }}).
+
+- name: Measure the effect on the application
+  hosts: shiraz_app
+  gather_facts: false
+  become: true
+  tasks:
+    - name: Report the SQL probe
+      ansible.builtin.include_tasks: tasks/probe_report.yml
+      vars:
+        probe_since: "{{ hostvars['localhost']['maintenance_started'] }}"
+        probe_label: maintenance window
+
+- name: Compare the run with the maintenance window
+  hosts: localhost
+  gather_facts: false
+  become: false
+  vars:
+    maintenance_window_minutes: 30
+    maintenance_minutes: "{{ ((now().timestamp() - maintenance_started | float) / 60) | round(1) }}"
+  tasks:
+    - name: Report the total duration
+      ansible.builtin.debug:
+        msg: >-
+          Maintenance took {{ maintenance_minutes }} min of a
+          {{ maintenance_window_minutes }} min window -
+          {{ 'WITHIN the window' if maintenance_minutes | float <= maintenance_window_minutes | float else 'OVER the window' }}.
+
+- name: Verify the lab
+  ansible.builtin.import_playbook: verify.yml
