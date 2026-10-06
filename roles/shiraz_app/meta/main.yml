@@ -1,0 +1,12 @@
+---
+galaxy_info:
+  author: nkskater
+  description: Docker compose stack standing in for the indaGO application server
+  license: Proprietary
+  min_ansible_version: "2.16"
+  platforms:
+    - name: Ubuntu
+      versions:
+        - noble
+dependencies:
+  - role: docker

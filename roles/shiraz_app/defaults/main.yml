@@ -1,0 +1,34 @@
+---
+shiraz_app_dir: /opt/indago
+shiraz_app_project: indago
+shiraz_app_timezone: America/New_York
+
+shiraz_app_nginx_image: nginx:stable-alpine
+shiraz_app_postgres_image: postgres:16-alpine
+shiraz_app_adminer_image: adminer:latest
+shiraz_app_sqlcheck_image: mcr.microsoft.com/mssql-tools:latest
+
+# Ports from the server spec.
+shiraz_app_http_ports:
+  - 80
+  - 8080
+  - 8083
+shiraz_app_https_port: 443
+shiraz_app_postgres_port: 15432
+shiraz_app_webui_port: 15433
+
+shiraz_app_postgres_db: indago
+shiraz_app_postgres_user: indago
+shiraz_app_postgres_password: ""         # required
+
+# The database server this application depends on.
+shiraz_app_db_host: shiraz-db
+shiraz_app_db_address: ""                # required; IP of shiraz_app_db_host
+shiraz_app_db_port: 1433
+shiraz_app_db_name: indago_mock
+shiraz_app_db_user: shiraz_svc
+shiraz_app_db_password: ""               # required
+
+# SQL connection probe: one attempt every N seconds, each with this timeout.
+shiraz_app_sqlcheck_interval: 1
+shiraz_app_sqlcheck_timeout: 2

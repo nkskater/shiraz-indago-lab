@@ -1,0 +1,18 @@
+<!doctype html>
+<!-- Managed by Ansible (role shiraz_app) -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>indaGO Shiraz mock - {{ inventory_hostname }}</title>
+  <style>body { font-family: sans-serif; max-width: 40rem; margin: 3rem auto; }</style>
+</head>
+<body>
+  <h1>indaGO Shiraz mock</h1>
+  <p>Application server <strong>{{ inventory_hostname }}</strong>. Placeholder for the vendor's containerized application.</p>
+  <ul>
+    <li><a href="/logs/sqlcheck.log">SQL connection probe log</a> ({{ shiraz_app_db_host }}:{{ shiraz_app_db_port }})</li>
+    <li><a href="/healthz">Health check</a></li>
+    <li>Database web UI on port {{ shiraz_app_webui_port }}, Postgres on port {{ shiraz_app_postgres_port }}</li>
+  </ul>
+</body>
+</html>

@@ -1,0 +1,114 @@
+---
+- name: Check required variables
+  ansible.builtin.assert:
+    that:
+      - shiraz_app_postgres_password | length > 0
+      - shiraz_app_db_password | length > 0
+      - shiraz_app_db_address | length > 0
+    fail_msg: Set shiraz_app_postgres_password, shiraz_app_db_password and shiraz_app_db_address.
+    quiet: true
+
+# --- Files ----------------------------------------------------------------------
+
+- name: Install what the certificate tasks need
+  ansible.builtin.apt:
+    name: python3-cryptography
+    state: present
+
+- name: Create the stack directories
+  ansible.builtin.file:
+    path: "{{ shiraz_app_dir }}/{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - ""
+    - nginx
+    - nginx/certs
+    - nginx/html
+    - sqlcheck
+    - logs
+    - data
+
+- name: Generate a private key for the web server
+  community.crypto.openssl_privatekey:
+    path: "{{ shiraz_app_dir }}/nginx/certs/server.key"
+    type: ECC
+    curve: secp256r1
+    owner: root
+    group: root
+    mode: "0600"
+  notify: Restart nginx
+
+- name: Generate a self-signed certificate for the web server
+  community.crypto.x509_certificate:
+    path: "{{ shiraz_app_dir }}/nginx/certs/server.crt"
+    privatekey_path: "{{ shiraz_app_dir }}/nginx/certs/server.key"
+    provider: selfsigned
+    selfsigned_not_after: "+3650d"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart nginx
+
+- name: Configure the web server
+  ansible.builtin.template:
+    src: nginx.conf.j2
+    dest: "{{ shiraz_app_dir }}/nginx/default.conf"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart nginx
+
+- name: Install the landing page
+  ansible.builtin.template:
+    src: index.html.j2
+    dest: "{{ shiraz_app_dir }}/nginx/html/index.html"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Install the SQL connection probe
+  ansible.builtin.template:
+    src: sqlcheck.sh.j2
+    dest: "{{ shiraz_app_dir }}/sqlcheck/sqlcheck.sh"
+    owner: root
+    group: root
+    mode: "0755"
+  notify: Restart sqlcheck
+
+- name: Rotate the probe log
+  ansible.builtin.template:
+    src: logrotate.j2
+    dest: /etc/logrotate.d/shiraz-sqlcheck
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Write the compose secrets
+  ansible.builtin.template:
+    src: env.j2
+    dest: "{{ shiraz_app_dir }}/.env"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+
+- name: Write the compose file
+  ansible.builtin.template:
+    src: compose.yml.j2
+    dest: "{{ shiraz_app_dir }}/compose.yml"
+    owner: root
+    group: root
+    mode: "0644"
+
+# --- Stack ----------------------------------------------------------------------
+
+- name: Start the stack
+  community.docker.docker_compose_v2:
+    project_src: "{{ shiraz_app_dir }}"
+    state: present
+
+- name: Restart services whose mounted files changed
+  ansible.builtin.meta: flush_handlers

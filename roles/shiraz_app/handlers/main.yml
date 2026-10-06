@@ -1,0 +1,14 @@
+---
+- name: Restart nginx
+  community.docker.docker_compose_v2:
+    project_src: "{{ shiraz_app_dir }}"
+    services:
+      - nginx
+    state: restarted
+
+- name: Restart sqlcheck
+  community.docker.docker_compose_v2:
+    project_src: "{{ shiraz_app_dir }}"
+    services:
+      - sqlcheck
+    state: restarted

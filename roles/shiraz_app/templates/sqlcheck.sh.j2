@@ -1,0 +1,26 @@
+#!/bin/bash
+# Managed by Ansible (role shiraz_app)
+# One line per attempt:  2026-10-06T11:00:00-04:00 PASS
+#                        2026-10-06T11:00:01-04:00 FAIL <reason>
+LOG=/logs/sqlcheck.log
+
+SQLCMD=$(command -v sqlcmd || true)
+for candidate in /opt/mssql-tools18/bin/sqlcmd /opt/mssql-tools/bin/sqlcmd; do
+    [ -z "$SQLCMD" ] && [ -x "$candidate" ] && SQLCMD=$candidate
+done
+if [ -z "$SQLCMD" ]; then
+    echo "$(date --iso-8601=seconds) FAIL sqlcmd not found in image" | tee -a "$LOG"
+    sleep 30
+    exit 1
+fi
+
+while true; do
+    ts=$(date --iso-8601=seconds)
+    if out=$("$SQLCMD" -C -S "${DB_HOST},${DB_PORT}" -d "$DB_NAME" -U "$DB_USER" \
+                 -l "$TIMEOUT" -t "$TIMEOUT" -b -h -1 -W -Q "SET NOCOUNT ON; SELECT 1" 2>&1); then
+        echo "$ts PASS" | tee -a "$LOG"
+    else
+        echo "$ts FAIL $(echo "$out" | tr '\n' ' ' | cut -c1-160)" | tee -a "$LOG"
+    fi
+    sleep "$INTERVAL"
+done

@@ -1,0 +1,70 @@
+# Managed by Ansible (role shiraz_app)
+name: {{ shiraz_app_project }}
+
+services:
+  nginx:
+    image: {{ shiraz_app_nginx_image }}
+    restart: unless-stopped
+    ports:
+{% for port in shiraz_app_http_ports %}
+      - "{{ port }}:{{ port }}"
+{% endfor %}
+      - "{{ shiraz_app_https_port }}:443"
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx/certs:/etc/nginx/certs:ro
+      - ./nginx/html:/usr/share/nginx/html:ro
+      - ./logs:/srv/logs:ro
+    environment:
+      TZ: {{ shiraz_app_timezone }}
+
+  postgres:
+    image: {{ shiraz_app_postgres_image }}
+    restart: unless-stopped
+    ports:
+      - "{{ shiraz_app_postgres_port }}:5432"
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: {{ shiraz_app_postgres_db }}
+      POSTGRES_USER: {{ shiraz_app_postgres_user }}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      TZ: {{ shiraz_app_timezone }}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U {{ shiraz_app_postgres_user }} -d {{ shiraz_app_postgres_db }}"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+  webui:
+    image: {{ shiraz_app_adminer_image }}
+    restart: unless-stopped
+    ports:
+      - "{{ shiraz_app_webui_port }}:8080"
+    environment:
+      ADMINER_DEFAULT_SERVER: postgres
+    depends_on:
+      - postgres
+
+  # Probes the SQL Server on {{ shiraz_app_db_host }} continuously and logs one
+  # PASS/FAIL line per attempt. Used to measure downtime during migrations.
+  sqlcheck:
+    image: {{ shiraz_app_sqlcheck_image }}
+    restart: unless-stopped
+    command: ["/bin/bash", "/sqlcheck.sh"]
+    extra_hosts:
+      - "{{ shiraz_app_db_host }}:{{ shiraz_app_db_address }}"
+    volumes:
+      - ./sqlcheck/sqlcheck.sh:/sqlcheck.sh:ro
+      - ./logs:/logs
+      # The image has no time zone database, so borrow the host's local time
+      # to stamp the log.
+      - /etc/localtime:/etc/localtime:ro
+    environment:
+      DB_HOST: {{ shiraz_app_db_host }}
+      DB_PORT: "{{ shiraz_app_db_port }}"
+      DB_NAME: {{ shiraz_app_db_name }}
+      DB_USER: {{ shiraz_app_db_user }}
+      SQLCMDPASSWORD: ${SQLCHECK_PASSWORD}
+      INTERVAL: "{{ shiraz_app_sqlcheck_interval }}"
+      TIMEOUT: "{{ shiraz_app_sqlcheck_timeout }}"
