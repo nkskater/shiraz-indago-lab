@@ -1,0 +1,387 @@
+---
+# Simulate the sudden loss of one nested host and confirm that its mock
+# servers come back on the other one.
+#
+#   ansible-playbook playbooks/shiraz/failover-test.yml -e confirm_failover=yes
+#
+# What it does:
+#   1. Pre-checks: quorum with all votes, replication healthy.
+#   2. Hard-stops the nested host VM from the physical node (like pulling the
+#      power cord; no clean shutdown).
+#   3. Confirms the surviving host keeps quorum thanks to the QDevice.
+#   4. Recovery: HA-managed servers are fenced and restarted by the HA manager.
+#      Servers that are not HA-managed are recovered by hand from their
+#      replicated disks (move the VM config to the survivor, start it).
+#   5. Measures what the application saw and runs verify for the degraded lab.
+#
+# The failed host stays off so the degraded state can be inspected.
+#
+# Options:
+#   -e failover_host=shiraz-pve-b    host to fail (default: the first nested host)
+#   -e failover_recover=yes          afterwards power the host back on, wait for
+#                                    it to rejoin and resync, and verify again
+#   -e failback=yes                  with recovery: also move each server back
+#                                    to its home node
+#   --tags recover                   only do the recovery part (after an earlier
+#                                    test left the host off)
+#
+# DATA LOSS IS EXPECTED: storage replication is asynchronous, so a recovered
+# server is rolled back to its last replication (up to the replication interval).
+
+- name: Check the request
+  hosts: localhost
+  gather_facts: false
+  become: false
+  tags: [always]
+  tasks:
+    - name: Require explicit confirmation
+      ansible.builtin.assert:
+        that:
+          - confirm_failover | default('no') == 'yes'
+          - failover_host | default(groups['nested_pve'] | first) in groups['nested_pve']
+          - groups['nested_pve'] | length > 1
+        fail_msg: >-
+          Nothing was touched. This test hard-stops a nested host. Re-run with
+          -e confirm_failover=yes [-e failover_host=<{{ groups['nested_pve'] | join('|') }}>].
+        quiet: true
+
+# --- 1. Pre-checks, from the host that will survive -----------------------------
+
+- name: Pre-checks before the failure
+  hosts: "{{ groups['nested_pve'] | difference([failover_host | default(groups['nested_pve'] | first)]) | first }}"
+  gather_facts: false
+  become: true
+  vars:
+    failover_failed: "{{ failover_host | default(groups['nested_pve'] | first) }}"
+  tasks:
+    - name: Check the cluster first
+      ansible.builtin.import_tasks: tasks/preflight_cluster.yml
+
+    - name: Check that every vote is present before the test
+      ansible.builtin.assert:
+        that:
+          - preflight_quorum.stdout is search('Flags:.*Qdevice')
+          # "Expected votes" and "Total votes" must show the same number.
+          - preflight_quorum.stdout | regex_findall('(?:Expected|Total) votes:\s+(\d+)') | unique | length == 1
+        fail_msg: >-
+          Not all votes are present (or there is no QDevice). Losing a host now
+          would cost quorum; fix the cluster before testing failover.
+        quiet: true
+
+    - name: List the guests in the cluster
+      ansible.builtin.command:
+        cmd: pvesh get /cluster/resources --type vm --output-format json
+      register: failover_resources
+      changed_when: false
+      check_mode: false
+
+    - name: Read the replication state of the host that will fail
+      ansible.builtin.command:
+        cmd: "pvesh get /nodes/{{ failover_failed }}/replication --output-format json"
+      register: failover_repl
+      changed_when: false
+      check_mode: false
+
+    - name: List HA resources
+      ansible.builtin.command:
+        cmd: pvesh get /cluster/ha/resources --output-format json
+      register: failover_ha
+      changed_when: false
+      check_mode: false
+
+    - name: Note which servers are affected and how
+      ansible.builtin.set_fact:
+        failover_guests: >-
+          {{ failover_resources.stdout | from_json
+             | selectattr('type', 'equalto', 'qemu')
+             | selectattr('node', 'equalto', failover_failed)
+             | selectattr('pool', 'defined') | selectattr('pool', 'equalto', lab_pool)
+             | rejectattr('template', 'equalto', 1)
+             | sort(attribute='vmid') | list }}
+        failover_ha_sids: "{{ failover_ha.stdout | from_json | map(attribute='sid') | list }}"
+        failover_jobs: "{{ failover_repl.stdout | from_json }}"
+
+    - name: Check that the affected servers have a healthy replica to recover from
+      ansible.builtin.assert:
+        that:
+          - failover_jobs | selectattr('guest', 'equalto', item.vmid) | selectattr('last_sync', 'defined') | list | length > 0
+          - failover_jobs | selectattr('guest', 'equalto', item.vmid) | selectattr('fail_count', 'gt', 0) | list | length == 0
+        fail_msg: "{{ item.name }} has no healthy replica on another host. Fix replication first (pvesr status)."
+        quiet: true
+      loop: "{{ failover_guests }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Show the plan
+      ansible.builtin.debug:
+        msg:
+          - "Failing {{ failover_failed }}; survivor is {{ inventory_hostname }}."
+          - "Servers on the failing host: {{ failover_guests | map(attribute='name') | join(', ') | default('none', true) }}"
+          - >-
+            Last replication before the failure:
+            {{ '%H:%M:%S' | ansible.builtin.strftime(failover_last_sync) if failover_jobs else 'n/a' }}
+            - anything written after that will be lost.
+      vars:
+        failover_last_sync: "{{ failover_jobs | map(attribute='last_sync', default=0) | map('int') | min | default(0, true) }}"
+
+# --- 2. The failure ---------------------------------------------------------------
+
+- name: Hard-stop the nested host from the physical node
+  hosts: localhost
+  gather_facts: false
+  become: false
+  vars:
+    failover_failed: "{{ failover_host | default(groups['nested_pve'] | first) }}"
+  module_defaults:
+    group/community.proxmox.proxmox: "{{ physical_api }}"
+  tasks:
+    - name: Record the moment of failure
+      ansible.builtin.set_fact:
+        failover_started: "{{ now().timestamp() }}"
+
+    - name: Pull the plug on the nested host
+      community.proxmox.proxmox_kvm:
+        node: "{{ physical_node }}"
+        vmid: "{{ hostvars[failover_failed]['pve_guest_vmid'] }}"
+        state: stopped
+        force: true
+        timeout: 60
+
+# --- 3 and 4. Quorum and recovery, on the survivor ----------------------------------
+
+- name: Recover on the surviving host
+  hosts: "{{ groups['nested_pve'] | difference([failover_host | default(groups['nested_pve'] | first)]) | first }}"
+  gather_facts: false
+  become: true
+  vars:
+    failover_failed: "{{ failover_host | default(groups['nested_pve'] | first) }}"
+  tasks:
+    - name: Wait for the cluster to notice the loss and stay quorate
+      ansible.builtin.command:
+        cmd: pvecm status
+      register: failover_quorum
+      changed_when: false
+      check_mode: false
+      until:
+        - failover_quorum.stdout is search('Nodes:\s+1\s')
+        - failover_quorum.stdout is search('Quorate:\s+Yes')
+      retries: 30
+      delay: 5
+
+    - name: Report the quorum state
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }} is alone but quorate:
+          {{ failover_quorum.stdout | regex_search('Total votes:\s+(\d+)', '\1') | first }} of
+          {{ failover_quorum.stdout | regex_search('Expected votes:\s+(\d+)', '\1') | first }} votes
+          (its own plus the QDevice).
+
+    # Not HA-managed: recover by hand. The VM's configuration lives in the
+    # clustered /etc/pve filesystem; moving it to the survivor's directory makes
+    # the survivor the owner, and the replicated disk is already there.
+    - name: Take over the configuration of servers that HA does not manage
+      ansible.builtin.command:
+        cmd: >-
+          mv /etc/pve/nodes/{{ failover_failed }}/qemu-server/{{ item.vmid }}.conf
+          /etc/pve/nodes/{{ inventory_hostname }}/qemu-server/{{ item.vmid }}.conf
+        removes: "/etc/pve/nodes/{{ failover_failed }}/qemu-server/{{ item.vmid }}.conf"
+      loop: "{{ failover_guests }}"
+      loop_control:
+        label: "{{ item.name }}"
+      when: ('vm:' ~ item.vmid) not in failover_ha_sids
+
+    - name: Start the servers that HA does not manage from their replica
+      ansible.builtin.command:
+        cmd: "qm start {{ item.vmid }}"
+      loop: "{{ failover_guests }}"
+      loop_control:
+        label: "{{ item.name }}"
+      when: ('vm:' ~ item.vmid) not in failover_ha_sids
+      changed_when: true
+
+    # HA-managed: nothing to do but wait. The HA manager waits until the dead
+    # node's watchdog must have fired (fencing), then restarts its services here.
+    # Ask QEMU on this host directly. The cluster-wide resource list still shows
+    # the dead host's last "running" report for a while and would end the wait
+    # before the guests have really started.
+    - name: Wait for every affected server to be running on the survivor
+      ansible.builtin.command:
+        cmd: "qm status {{ item.vmid }}"
+      register: failover_after
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      until:
+        - failover_after.rc == 0
+        - "'status: running' in failover_after.stdout"
+      retries: 180
+      delay: 5
+      loop: "{{ failover_guests }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Report the recovery time
+      ansible.builtin.debug:
+        msg: >-
+          {{ failover_guests | length }} server(s) running on {{ inventory_hostname }}
+          {{ (now().timestamp() - hostvars['localhost']['failover_started'] | float) | round(0) | int }} s
+          after the failure ({{ failover_guests | map(attribute='name') | join(', ') }}).
+
+# --- 5. What the application saw, and the state of the degraded lab ------------------
+
+- name: Measure the effect on the application
+  hosts: shiraz_app
+  gather_facts: false
+  become: true
+  tasks:
+    - name: Report the SQL probe
+      ansible.builtin.include_tasks: tasks/probe_report.yml
+      vars:
+        probe_since: "{{ hostvars['localhost']['failover_started'] }}"
+        probe_label: "failure of {{ failover_host | default(groups['nested_pve'] | first) }}"
+
+- name: Verify the degraded lab
+  ansible.builtin.import_playbook: verify.yml
+  vars:
+    verify_down_nodes:
+      - "{{ failover_host | default(groups['nested_pve'] | first) }}"
+    verify_replication: false      # the replication target is the host that is off
+
+- name: Say how to bring the host back
+  hosts: localhost
+  gather_facts: false
+  become: false
+  tasks:
+    - name: Show the next step
+      ansible.builtin.debug:
+        msg: >-
+          {{ failover_host | default(groups['nested_pve'] | first) }} is still off.
+          Bring it back with: ansible-playbook playbooks/shiraz/failover-test.yml
+          -e confirm_failover=yes --tags recover
+      when:
+        - failover_recover | default('no') != 'yes'
+
+# --- Recovery of the failed host (optional) ------------------------------------------
+
+- name: Power the failed host back on
+  hosts: localhost
+  gather_facts: false
+  become: false
+  tags: [recover]
+  vars:
+    failover_failed: "{{ failover_host | default(groups['nested_pve'] | first) }}"
+  module_defaults:
+    group/community.proxmox.proxmox: "{{ physical_api }}"
+  tasks:
+    - name: Record when the recovery starts
+      ansible.builtin.set_fact:
+        failover_recover_started: "{{ now().timestamp() | int }}"
+
+    - name: Start the nested host VM
+      community.proxmox.proxmox_kvm:
+        node: "{{ physical_node }}"
+        vmid: "{{ hostvars[failover_failed]['pve_guest_vmid'] }}"
+        state: started
+        timeout: 120
+      when: failover_recover | default('no') == 'yes' or 'recover' in ansible_run_tags
+
+- name: Wait for the failed host to rejoin
+  hosts: "{{ failover_host | default(groups['nested_pve'] | first) }}"
+  gather_facts: false
+  become: true
+  tags: [recover]
+  vars:
+    failover_recovering: "{{ failover_recover | default('no') == 'yes' or 'recover' in ansible_run_tags }}"
+  tasks:
+    - name: Wait until the host answers again
+      ansible.builtin.wait_for_connection:
+        timeout: 600
+      when: failover_recovering
+
+    - name: Wait until every vote is back
+      ansible.builtin.command:
+        cmd: pvecm status
+      register: failover_rejoin
+      changed_when: false
+      check_mode: false
+      until:
+        - failover_rejoin.rc == 0
+        - failover_rejoin.stdout is search('Quorate:\s+Yes')
+        - failover_rejoin.stdout is search('Nodes:\s+' ~ groups['nested_pve'] | length ~ '\s')
+        - failover_rejoin.stdout is search('Flags:.*Qdevice')
+      retries: 60
+      delay: 5
+      when: failover_recovering
+
+# After a recovery the servers run on the other host, so their replication has
+# to start flowing back towards the host that just returned.
+- name: Wait for replication to recover
+  hosts: nested_pve
+  gather_facts: false
+  become: true
+  tags: [recover]
+  vars:
+    failover_recovering: "{{ failover_recover | default('no') == 'yes' or 'recover' in ansible_run_tags }}"
+    failover_local_jobs: "{{ failover_repl_now.stdout | default('[]', true) | from_json }}"
+  tasks:
+    - name: List the replication jobs that start from this node
+      ansible.builtin.command:
+        cmd: "pvesh get /nodes/{{ inventory_hostname }}/replication --output-format json"
+      register: failover_repl_now
+      changed_when: false
+      check_mode: false
+      when: failover_recovering
+
+    # Do not wait for the schedule: until this sync has run, the returned host
+    # holds stale disks and nothing can be migrated to it.
+    - name: Start a replication run now
+      ansible.builtin.command:
+        cmd: "pvesr schedule-now {{ item.id }}"
+      loop: "{{ failover_local_jobs }}"
+      loop_control:
+        label: "{{ item.id }}"
+      when: failover_recovering
+      changed_when: true
+
+    # "Healthy" is not enough here: every job must have completed a sync that
+    # started after the host came back.
+    - name: Wait until every job has synced since the host came back
+      ansible.builtin.command:
+        cmd: "pvesh get /nodes/{{ inventory_hostname }}/replication --output-format json"
+      register: failover_repl_after
+      changed_when: false
+      check_mode: false
+      until:
+        - failover_repl_after.rc == 0
+        - failover_repl_after.stdout | from_json | selectattr('fail_count', 'defined') | selectattr('fail_count', 'gt', 0) | list | length == 0
+        - failover_repl_after.stdout | from_json | map(attribute='last_sync', default=0) | map('int')
+          | select('le', hostvars['localhost']['failover_recover_started'] | int) | list | length == 0
+      retries: 90
+      delay: 10
+      when: failover_recovering
+
+- name: Move the servers back to their home nodes
+  hosts: mock_servers
+  gather_facts: false
+  become: true
+  serial: 1
+  tags: [recover]
+  tasks:
+    - name: Move the server home
+      ansible.builtin.include_tasks:
+        file: tasks/migrate_guest.yml
+        apply:
+          delegate_to: "{{ pve_guest_home_node }}"
+      vars:
+        migrate_name: "{{ inventory_hostname }}"
+        migrate_vmid: "{{ pve_guest_vmid }}"
+        migrate_target: "{{ pve_guest_home_node }}"
+        migrate_mode: live
+      when:
+        - failback | default('no') == 'yes'
+        - failover_recover | default('no') == 'yes' or 'recover' in ansible_run_tags
+
+- name: Verify the recovered lab
+  ansible.builtin.import_playbook: verify.yml
+  tags: [recover]
+  when: failover_recover | default('no') == 'yes' or 'recover' in ansible_run_tags
