@@ -1,0 +1,62 @@
+---
+# --- VM definition on the nested cluster (role pve_guest) ---------------------
+# Sizing per the lab plan: 6 GB RAM, 2 vCPU, 15 GB disk each.
+pve_guest_api: "{{ nested_api }}"
+pve_guest_node: "{{ nested_primary }}"          # the template lives here; clones start here
+pve_guest_template_vmid: "{{ nested_template_vmid }}"
+pve_guest_template_name: "{{ nested_template_name }}"
+pve_guest_storage: "{{ nested_storage }}"
+pve_guest_pool: "{{ lab_pool }}"
+pve_guest_tags:
+  - "{{ lab_tag }}"
+pve_guest_description: >-
+  indaGO Shiraz mock server. Managed by Ansible (shiraz-indago-lab).
+pve_guest_cores: 2
+pve_guest_memory_mb: 6144
+# A generic CPU model, not "host": the guest then live-migrates between hosts
+# even if their CPUs differ.
+pve_guest_cpu_type: x86-64-v2-AES
+pve_guest_onboot: true
+pve_guest_os_disk_size_gb: 15
+pve_guest_prefix: "{{ lab_network_prefix }}"
+pve_guest_gateway: "{{ lab_gateway }}"
+pve_guest_nameservers: "{{ lab_nameservers }}"
+pve_guest_search_domain: "{{ lab_domain }}"
+pve_guest_ci_user: "{{ lab_ansible_user }}"
+pve_guest_ssh_public_key: "{{ lab_ansible_public_key }}"
+
+# --- Replication and HA (role pve_replication) ---------------------------------
+pve_replication_vmid: "{{ pve_guest_vmid }}"
+pve_replication_cluster_node: "{{ nested_api_node }}"
+pve_replication_nodes: "{{ groups['nested_pve'] }}"
+pve_replication_schedule: "*/5"
+pve_replication_ha: true
+
+# --- Server baseline (role shiraz_common) ----------------------------------------
+# Ports the vendor spec requires to be reachable.
+shiraz_firewall_ports:
+  - 22      # SSH
+  - 80      # HTTP
+  - 443     # HTTPS
+  - 1433    # SQL Server
+  - 1434    # SQL Server Browser
+  - 8080
+  - 8083
+  - 15432
+  - 15433
+shiraz_common_firewall_ports: "{{ shiraz_firewall_ports }}"
+shiraz_common_timezone: "{{ lab_timezone }}"
+shiraz_common_admin_password_hash: "{{ vault_dmwh_admin_password_hash }}"
+shiraz_common_hosts: >-
+  {{ dict(groups['mock_servers']
+          | zip(groups['mock_servers'] | map('extract', hostvars, 'ansible_host')))
+     | dict2items(key_name='name', value_name='address') }}
+
+# --- Docker (role docker) ----------------------------------------------------------
+docker_users:
+  - "{{ lab_ansible_user }}"
+
+# --- Shared between the database and application roles ----------------------------
+shiraz_database_name: indago_mock
+shiraz_database_login: shiraz_svc
+shiraz_database_host: "{{ groups['shiraz_db'] | first }}"

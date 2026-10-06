@@ -1,0 +1,8 @@
+---
+shiraz_app_timezone: "{{ lab_timezone }}"
+shiraz_app_postgres_password: "{{ vault_postgres_password }}"
+shiraz_app_db_host: "{{ shiraz_database_host }}"
+shiraz_app_db_address: "{{ hostvars[shiraz_database_host]['ansible_host'] }}"
+shiraz_app_db_name: "{{ shiraz_database_name }}"
+shiraz_app_db_user: "{{ shiraz_database_login }}"
+shiraz_app_db_password: "{{ vault_mssql_shiraz_svc_password }}"

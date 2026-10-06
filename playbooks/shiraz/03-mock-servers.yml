@@ -1,0 +1,73 @@
+---
+# Phase 3 - create and configure the mock servers on the nested cluster.
+#
+#   ansible-playbook playbooks/shiraz/03-mock-servers.yml
+#
+# Safe to re-run; a second run reports no changes and never moves a server
+# back to its home node.
+
+- name: Preflight checks against the nested cluster
+  hosts: nested_pve[0]
+  gather_facts: false
+  become: true
+  tags: [preflight]
+  tasks:
+    - name: Check that the nested API token exists
+      ansible.builtin.assert:
+        that:
+          - vault_nested_api_token_secret is defined
+        fail_msg: No nested API token yet. Run playbooks/shiraz/02-cluster.yml first.
+        quiet: true
+
+    - name: Read the cluster's quorum state
+      ansible.builtin.command:
+        cmd: pvecm status
+      register: preflight_quorum
+      changed_when: false
+      check_mode: false
+
+    - name: Check that the cluster is quorate
+      ansible.builtin.assert:
+        that:
+          - preflight_quorum.stdout is search('Quorate:\s+Yes')
+        fail_msg: The nested cluster is not quorate.
+        quiet: true
+
+- name: Create the mock server VMs
+  hosts: mock_servers
+  gather_facts: false       # the VMs do not exist yet on the first run
+  tags: [provision]
+  roles:
+    - role: pve_guest
+
+- name: Replicate the mock servers and put them under HA
+  hosts: mock_servers
+  gather_facts: false
+  tags: [protect]
+  roles:
+    - role: pve_replication
+
+- name: Apply the server baseline and install Docker
+  hosts: mock_servers
+  gather_facts: true
+  become: true
+  tags: [configure]
+  roles:
+    - role: shiraz_common
+    - role: docker
+
+- name: Configure the database server
+  hosts: shiraz_db
+  gather_facts: true
+  become: true
+  tags: [configure, db]
+  roles:
+    - role: shiraz_db
+
+- name: Configure the application server
+  hosts: shiraz_app
+  gather_facts: true
+  become: true
+  tags: [configure, app]
+  roles:
+    - role: shiraz_app

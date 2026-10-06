@@ -1,0 +1,6 @@
+---
+shiraz_db_timezone: "{{ lab_timezone }}"
+shiraz_db_sa_password: "{{ vault_mssql_sa_password }}"
+shiraz_db_database: "{{ shiraz_database_name }}"
+shiraz_db_login: "{{ shiraz_database_login }}"
+shiraz_db_login_password: "{{ vault_mssql_shiraz_svc_password }}"
