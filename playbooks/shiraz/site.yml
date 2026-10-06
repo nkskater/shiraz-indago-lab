@@ -1,0 +1,18 @@
+---
+# Build the whole lab from nothing, in order, then check it.
+#
+#   ansible-playbook playbooks/shiraz/site.yml
+#
+# Each imported playbook can also be run on its own.
+
+- name: Phase 1 - nested Proxmox VE hosts
+  ansible.builtin.import_playbook: 01-nested-hosts.yml
+
+- name: Phase 2 - cluster, quorum device, storage, template
+  ansible.builtin.import_playbook: 02-cluster.yml
+
+- name: Phase 3 - mock servers
+  ansible.builtin.import_playbook: 03-mock-servers.yml
+
+- name: Verify the lab
+  ansible.builtin.import_playbook: verify.yml
