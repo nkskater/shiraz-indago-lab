@@ -73,6 +73,17 @@
         timeout: "{{ pve_guest_clone_timeout }}"
       when: not pve_guest__exists
       throttle: 1
+      register: pve_guest__clone
+
+    - name: Move the new guest to its home node
+      community.proxmox.proxmox_kvm:
+        vmid: "{{ pve_guest_vmid }}"
+        node: "{{ pve_guest_home_node }}"
+        migrate: true
+        timeout: "{{ pve_guest_migrate_timeout }}"
+      when:
+        - pve_guest__clone is changed
+        - pve_guest_home_node != pve_guest_node
 
     # --- Configure ------------------------------------------------------------
 
@@ -85,7 +96,7 @@
 
     - name: Apply hardware and cloud-init settings
       community.proxmox.proxmox_kvm:
-        node: "{{ pve_guest_node }}"
+        node: "{{ pve_guest__node }}"
         vmid: "{{ pve_guest_vmid }}"
         name: "{{ pve_guest_name }}"
         update: true
@@ -139,7 +150,7 @@
 
     - name: Start the guest
       community.proxmox.proxmox_kvm:
-        node: "{{ pve_guest_node }}"
+        node: "{{ pve_guest__node }}"
         vmid: "{{ pve_guest_vmid }}"
         state: started
         timeout: 120

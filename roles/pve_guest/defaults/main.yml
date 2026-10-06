@@ -11,6 +11,12 @@ pve_guest_template_vmid: 0
 pve_guest_template_name: ""
 pve_guest_storage: ""
 
+# Where a newly created guest should run. The clone always happens on
+# pve_guest_node (templates on local storage cannot be cloned across nodes);
+# a new guest is then moved here before its first start. Existing guests are
+# never moved by this role, so it does not undo a later migration.
+pve_guest_home_node: "{{ pve_guest_node }}"
+
 pve_guest_name: "{{ inventory_hostname }}"
 pve_guest_description: Managed by Ansible.
 pve_guest_pool: ""
@@ -39,4 +45,5 @@ pve_guest_ssh_public_key: ""
 # Lifecycle
 pve_guest_start: true
 pve_guest_clone_timeout: 900
+pve_guest_migrate_timeout: 900
 pve_guest_boot_timeout: 300
