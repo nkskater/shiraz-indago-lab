@@ -51,6 +51,46 @@
         apply:
           delegate_to: localhost
 
+# Deleting a guest removes its replication jobs but can leave the replica disk
+# on the other host, which would collide with a rebuild under the same VMID.
+- name: Remove replica disks the mock servers left behind
+  hosts: "{{ (layer | default('') == 'mock') | ternary('nested_pve', 'none') }}"
+  gather_facts: false
+  become: true
+  vars:
+    destroy_vmids: "{{ groups['mock_servers'] | map('extract', hostvars, 'pve_guest_vmid') | map('int') | list }}"
+    destroy_leftovers: >-
+      {{ destroy_volumes.results | map(attribute='stdout') | join('\n')
+         | regex_findall('(?m)^(' ~ nested_storage ~ ':vm-(?:' ~ destroy_vmids | join('|') ~ ')-\S+)') }}
+  tasks:
+    - name: List the guests that still exist
+      ansible.builtin.command:
+        cmd: pvesh get /cluster/resources --type vm --output-format json
+      register: destroy_remaining
+      changed_when: false
+      check_mode: false
+
+    - name: Refuse to free disks of a guest that still exists
+      ansible.builtin.assert:
+        that:
+          - destroy_remaining.stdout | from_json | selectattr('vmid', 'in', destroy_vmids) | list | length == 0
+        fail_msg: A mock server still exists in the cluster; not freeing any of its disks.
+        quiet: true
+
+    - name: List leftover volumes of the removed servers on this node
+      ansible.builtin.command:
+        cmd: "pvesm list {{ nested_storage }} --vmid {{ item }}"
+      loop: "{{ destroy_vmids }}"
+      register: destroy_volumes
+      changed_when: false
+      check_mode: false
+
+    - name: Free the leftover volumes
+      ansible.builtin.command:
+        cmd: "pvesm free {{ item }}"
+      loop: "{{ destroy_leftovers }}"
+      changed_when: true
+
 - name: Destroy the mock server template
   hosts: "{{ (layer | default('') == 'mock' and destroy_templates | default('no') == 'yes') | ternary('localhost', 'none') }}"
   gather_facts: false
