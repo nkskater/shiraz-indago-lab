@@ -1,0 +1,22 @@
+---
+# Admin API connection (root@pam with password) used to create everything.
+pve_api_access_api: {}
+
+# Required
+pve_api_access_pool: ""
+pve_api_access_user: ""            # e.g. ansible@pve
+pve_api_access_secret_file: ""     # control-node path of the vault-encrypted vars file to write
+pve_api_access_vault_password_file: ""   # read by ansible-vault on the control node
+
+pve_api_access_pool_comment: Managed by Ansible.
+pve_api_access_user_comment: Managed by Ansible.
+pve_api_access_token_id: ansible
+
+# Permissions: [{ path: /pool/x, roleid: PVEVMAdmin }]
+pve_api_access_acls: []
+
+# The token secret is shown only once by Proxmox. It is saved to
+# pve_api_access_secret_file under this variable name, encrypted with this
+# vault-id, so later playbooks can read it like any other vaulted variable.
+pve_api_access_secret_var: vault_api_token_secret
+pve_api_access_vault_id: default

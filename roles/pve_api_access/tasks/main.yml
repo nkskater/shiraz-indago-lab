@@ -1,0 +1,134 @@
+---
+# Runs against one cluster node. API calls are made from the control node; the
+# single CLI call (removing a stale token) runs on the node itself.
+
+- name: Check required variables
+  ansible.builtin.assert:
+    that:
+      - pve_api_access_api.api_host | default('') | length > 0
+      - pve_api_access_pool | length > 0
+      - pve_api_access_user is match('.+@.+')
+      - pve_api_access_secret_file | length > 0
+      - pve_api_access_vault_password_file | length > 0
+    quiet: true
+
+- name: Create the resource pool
+  community.proxmox.proxmox_pool:
+    poolid: "{{ pve_api_access_pool }}"
+    comment: "{{ pve_api_access_pool_comment }}"
+    state: present
+  delegate_to: localhost
+  become: false
+  module_defaults:
+    group/community.proxmox.proxmox: "{{ pve_api_access_api }}"
+
+# --- User and token -----------------------------------------------------------
+
+- name: List existing API tokens of the user
+  ansible.builtin.command:
+    cmd: "pveum user token list {{ pve_api_access_user }} --output-format json"
+  register: pve_api_access__tokens
+  changed_when: false
+  failed_when: false          # fails only when the user does not exist yet
+  check_mode: false
+
+# Proxmox shows a token secret once. If the token exists but its secret is not
+# in the vault, it cannot be used and is replaced.
+- name: Remove a token whose secret is not in the vault
+  ansible.builtin.command:
+    cmd: "pveum user token remove {{ pve_api_access_user }} {{ pve_api_access_token_id }}"
+  when: pve_api_access__stale
+  changed_when: true
+
+# The module treats "tokens" as the complete list for the user, so the user
+# and its token are always declared together in this one task.
+- name: Create the API user and its token
+  community.proxmox.proxmox_user:
+    userid: "{{ pve_api_access_user }}"
+    comment: "{{ pve_api_access_user_comment }}"
+    tokens:
+      - tokenid: "{{ pve_api_access_token_id }}"
+        privsep: false
+        comment: "{{ pve_api_access_user_comment }}"
+    state: present
+  delegate_to: localhost
+  become: false
+  module_defaults:
+    group/community.proxmox.proxmox: "{{ pve_api_access_api }}"
+  register: pve_api_access__token
+  no_log: true      # the result contains the token secret when one is created
+
+- name: Grant the user its permissions
+  community.proxmox.proxmox_access_acl:
+    path: "{{ item.path }}"
+    roleid: "{{ item.roleid }}"
+    type: user
+    ugid: "{{ pve_api_access_user }}"
+    state: present
+  loop: "{{ pve_api_access_acls }}"
+  loop_control:
+    label: "{{ item.roleid }} on {{ item.path }}"
+  delegate_to: localhost
+  become: false
+  module_defaults:
+    group/community.proxmox.proxmox: "{{ pve_api_access_api }}"
+
+# --- Keep the new secret ----------------------------------------------------------
+
+# Encrypted with the ansible-vault CLI rather than the vault filter: values
+# produced by the filter are decrypted again by Ansible before a module sees
+# them, so a file written from one would end up in plain text.
+- name: Save a new token secret to a vault-encrypted vars file
+  ansible.builtin.command:
+    argv:
+      - "{{ ansible_playbook_python | dirname }}/ansible-vault"
+      - encrypt
+      - --vault-id
+      - "{{ pve_api_access_vault_id }}@{{ pve_api_access_vault_password_file }}"
+      - --encrypt-vault-id
+      - "{{ pve_api_access_vault_id }}"
+      - --output
+      - "{{ pve_api_access_secret_file }}"
+    stdin: '{{ pve_api_access_secret_var }}: "{{ pve_api_access__new_secret }}"'
+  delegate_to: localhost
+  become: false
+  when: pve_api_access__new_secret | length > 0
+  changed_when: true
+  no_log: true
+
+- name: Read the first bytes of the saved file
+  ansible.builtin.command:
+    cmd: "head -c 14 {{ pve_api_access_secret_file }}"
+  delegate_to: localhost
+  become: false
+  register: pve_api_access__header
+  changed_when: false
+  check_mode: false
+  when: pve_api_access__new_secret | length > 0
+
+- name: Check that the saved file is encrypted
+  ansible.builtin.assert:
+    that:
+      - pve_api_access__header.stdout == '$ANSIBLE_VAULT'
+    fail_msg: "{{ pve_api_access_secret_file }} is not vault-encrypted. Delete it and re-run."
+    quiet: true
+  when: pve_api_access__new_secret | length > 0
+
+- name: Restrict the saved file to its owner
+  ansible.builtin.file:
+    path: "{{ pve_api_access_secret_file }}"
+    mode: "0600"
+  delegate_to: localhost
+  become: false
+  when: pve_api_access__new_secret | length > 0
+
+# Inventory variables were read before the file above existed, so hand the
+# secret to every host for the rest of this run (site.yml goes on to use it).
+- name: Make a new token secret available to the rest of this run
+  ansible.builtin.set_fact:
+    "{{ pve_api_access_secret_var }}": "{{ pve_api_access__new_secret }}"
+  delegate_to: "{{ item }}"
+  delegate_facts: true
+  loop: "{{ groups['all'] }}"
+  when: pve_api_access__new_secret | length > 0
+  no_log: true

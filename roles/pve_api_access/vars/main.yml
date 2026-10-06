@@ -1,0 +1,14 @@
+---
+# Internal values - not meant to be overridden.
+pve_api_access__token_exists: >-
+  {{ pve_api_access__tokens.rc == 0
+     and pve_api_access_token_id in
+         (pve_api_access__tokens.stdout | from_json | map(attribute='tokenid') | list) }}
+
+# The secret Ansible already holds, if any.
+pve_api_access__known_secret: "{{ lookup('ansible.builtin.vars', pve_api_access_secret_var, default='') }}"
+
+pve_api_access__stale: "{{ pve_api_access__token_exists and pve_api_access__known_secret | length == 0 }}"
+
+# Set only by a run that actually created the token.
+pve_api_access__new_secret: "{{ (pve_api_access__token.secrets | default({}))[pve_api_access_token_id] | default('') }}"
