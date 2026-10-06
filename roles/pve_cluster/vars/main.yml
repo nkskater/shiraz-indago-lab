@@ -1,0 +1,7 @@
+---
+# Internal values - not meant to be overridden.
+# TLS fingerprint of the first node, which a joining node must present.
+# (cluster_join is a dict, although the module documentation calls it a list.)
+pve_cluster__fingerprint: >-
+  {{ (pve_cluster__join.cluster_join.nodelist
+      | selectattr('name', 'equalto', pve_cluster_primary) | first).pve_fp }}

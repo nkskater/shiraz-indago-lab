@@ -1,0 +1,15 @@
+---
+# Required
+pve_cluster_name: ""
+pve_cluster_primary: ""          # inventory hostname of the node that creates the cluster
+pve_cluster_api_password: ""     # root@pam password, the same on every node
+
+# Creating and joining a cluster is only allowed for root@pam with a password;
+# API tokens cannot do it.
+pve_cluster_api_user: root@pam
+pve_cluster_validate_certs: false
+
+# Address used for the API and for corosync link 0.
+pve_cluster_address: "{{ ansible_host }}"
+pve_cluster_primary_address: "{{ hostvars[pve_cluster_primary]['ansible_host'] }}"
+pve_cluster_node_count: "{{ ansible_play_hosts_all | length }}"

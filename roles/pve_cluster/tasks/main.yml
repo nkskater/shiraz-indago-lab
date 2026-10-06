@@ -1,0 +1,59 @@
+---
+- name: Form the cluster through the Proxmox API
+  delegate_to: localhost
+  become: false
+  module_defaults:
+    group/community.proxmox.proxmox:
+      api_user: "{{ pve_cluster_api_user }}"
+      api_password: "{{ pve_cluster_api_password }}"
+      validate_certs: "{{ pve_cluster_validate_certs }}"
+  block:
+    - name: Check required variables
+      ansible.builtin.assert:
+        that:
+          - pve_cluster_name | length > 0
+          - pve_cluster_primary in ansible_play_hosts_all
+          - pve_cluster_api_password | length > 0
+        quiet: true
+
+    - name: Create the cluster on the first node
+      community.proxmox.proxmox_cluster:
+        api_host: "{{ pve_cluster_primary_address }}"
+        cluster_name: "{{ pve_cluster_name }}"
+        link0: "{{ pve_cluster_primary_address }}"
+        state: present
+      run_once: true
+
+    # The API restarts briefly after a cluster is created.
+    - name: Read the join information from the first node
+      community.proxmox.proxmox_cluster_join_info:
+        api_host: "{{ pve_cluster_primary_address }}"
+      register: pve_cluster__join
+      until: pve_cluster__join is succeeded
+      retries: 12
+      delay: 5
+      run_once: true
+
+    - name: Join the other nodes to the cluster
+      community.proxmox.proxmox_cluster:
+        api_host: "{{ pve_cluster_address }}"
+        master_ip: "{{ pve_cluster_primary_address }}"
+        master_api_password: "{{ pve_cluster_api_password }}"
+        fingerprint: "{{ pve_cluster__fingerprint }}"
+        link0: "{{ pve_cluster_address }}"
+        state: present
+      when: inventory_hostname != pve_cluster_primary
+      throttle: 1
+
+- name: Wait until every node is a quorate member
+  ansible.builtin.command:
+    cmd: pvecm status
+  register: pve_cluster__status
+  changed_when: false
+  check_mode: false
+  until:
+    - pve_cluster__status.rc == 0
+    - pve_cluster__status.stdout is search('Quorate:\s+Yes')
+    - pve_cluster__status.stdout is search('Nodes:\s+' ~ pve_cluster_node_count ~ '\s')
+  retries: 36
+  delay: 5
