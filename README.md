@@ -22,7 +22,7 @@ Design notes, the mapping to the vendor spec, the runbook and known limitations 
 
 | Phase | Playbook | State |
 |---|---|---|
-| 1 Nested hosts | `playbooks/shiraz/01-nested-hosts.yml` | written, not yet run |
+| 1 Nested hosts | `playbooks/shiraz/01-nested-hosts.yml` | built; second run reports zero changes |
 | 2 Cluster + storage | `playbooks/shiraz/02-cluster.yml` | not written |
 | 3 Mock servers | `playbooks/shiraz/03-mock-servers.yml`, `site.yml` | not written |
 | 4 Runbooks | `migrate`, `drain-host`, `failover-test`, `maintenance`, `verify`, `destroy` | not written |
