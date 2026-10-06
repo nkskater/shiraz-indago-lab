@@ -1,0 +1,125 @@
+---
+# Move one guest to another node and wait until it is running there.
+# Runs on a cluster node as root.
+#
+# Required vars:
+#   migrate_name    guest name (for messages)
+#   migrate_vmid    VMID
+#   migrate_target  node to move to
+#   migrate_mode    live (keeps running) or offline (shut down, move, start)
+
+- name: Find the guest in the cluster
+  ansible.builtin.command:
+    cmd: pvesh get /cluster/resources --type vm --output-format json
+  register: migrate_resources
+  changed_when: false
+  check_mode: false
+
+- name: Note where the guest is
+  ansible.builtin.set_fact:
+    migrate_source: >-
+      {{ (migrate_resources.stdout | from_json | selectattr('vmid', 'equalto', migrate_vmid | int) | first).node }}
+
+- name: Report a guest that is already on the target
+  ansible.builtin.debug:
+    msg: "{{ migrate_name }} is already on {{ migrate_target }} - nothing to do."
+  when: migrate_source == migrate_target
+
+- name: Migrate the guest
+  when: migrate_source != migrate_target
+  block:
+    # --- Pre-checks -----------------------------------------------------------
+    - name: Read the guest's replication state
+      ansible.builtin.command:
+        cmd: "pvesh get /nodes/{{ migrate_source }}/replication --guest {{ migrate_vmid }} --output-format json"
+      register: migrate_repl
+      changed_when: false
+      check_mode: false
+
+    - name: Check that replication is healthy before moving
+      ansible.builtin.assert:
+        that:
+          - migrate_repl.stdout | from_json | selectattr('fail_count', 'defined') | selectattr('fail_count', 'gt', 0) | list | length == 0
+          - migrate_repl.stdout | from_json | rejectattr('last_sync', 'defined') | list | length == 0
+        fail_msg: "Replication of {{ migrate_name }} is failing or has never synced (pvesr status)."
+        quiet: true
+
+    - name: List HA resources
+      ansible.builtin.command:
+        cmd: pvesh get /cluster/ha/resources --output-format json
+      register: migrate_ha
+      changed_when: false
+      check_mode: false
+
+    - name: Note the start time and whether HA manages the guest
+      ansible.builtin.set_fact:
+        migrate_started: "{{ now().timestamp() }}"
+        migrate_is_ha: "{{ ('vm:' ~ migrate_vmid) in (migrate_ha.stdout | from_json | map(attribute='sid') | list) }}"
+
+    # --- HA-managed guest: ask the HA manager -----------------------------------
+    # "migrate" moves a running guest live; "relocate" stops it, moves it and
+    # starts it again on the target.
+    - name: Ask the HA manager to move the guest
+      ansible.builtin.command:
+        cmd: >-
+          ha-manager {{ 'migrate' if migrate_mode == 'live' else 'relocate' }}
+          vm:{{ migrate_vmid }} {{ migrate_target }}
+      when: migrate_is_ha
+      changed_when: true
+
+    # --- Unmanaged guest: drive qm directly --------------------------------------
+    - name: Live-migrate the guest
+      ansible.builtin.command:
+        cmd: "qm migrate {{ migrate_vmid }} {{ migrate_target }} --online --with-local-disks"
+      delegate_to: "{{ migrate_source }}"
+      when:
+        - not migrate_is_ha
+        - migrate_mode == 'live'
+      changed_when: true
+
+    - name: Shut the guest down, move it and start it again
+      ansible.builtin.command:
+        cmd: "{{ item.cmd }}"
+      delegate_to: "{{ item.node }}"
+      loop:
+        - { node: "{{ migrate_source }}", cmd: "qm shutdown {{ migrate_vmid }} --timeout 120" }
+        - { node: "{{ migrate_source }}", cmd: "qm migrate {{ migrate_vmid }} {{ migrate_target }}" }
+        - { node: "{{ migrate_target }}", cmd: "qm start {{ migrate_vmid }}" }
+      loop_control:
+        label: "{{ item.cmd }}"
+      when:
+        - not migrate_is_ha
+        - migrate_mode == 'offline'
+      changed_when: true
+
+    # --- Wait -------------------------------------------------------------------
+    - name: Wait until the guest is running on the target
+      ansible.builtin.command:
+        cmd: pvesh get /cluster/resources --type vm --output-format json
+      register: migrate_after
+      changed_when: false
+      check_mode: false
+      until:
+        - (migrate_after.stdout | from_json | selectattr('vmid', 'equalto', migrate_vmid | int) | first).node == migrate_target
+        - (migrate_after.stdout | from_json | selectattr('vmid', 'equalto', migrate_vmid | int) | first).status == 'running'
+        - (migrate_after.stdout | from_json | selectattr('vmid', 'equalto', migrate_vmid | int) | first).lock | default('') == ''
+      retries: 120
+      delay: 5
+
+    - name: Wait until the HA manager reports the guest as started
+      ansible.builtin.command:
+        cmd: ha-manager status
+      register: migrate_ha_after
+      changed_when: false
+      check_mode: false
+      until: migrate_ha_after.stdout is search('service vm:' ~ migrate_vmid ~ ' \(' ~ migrate_target ~ ', started\)')
+      retries: 60
+      delay: 5
+      when: migrate_is_ha
+
+    - name: Report the move
+      ansible.builtin.debug:
+        msg: >-
+          {{ migrate_name }} moved {{ migrate_source }} -> {{ migrate_target }}
+          ({{ migrate_mode }}{{ ', via HA manager' if migrate_is_ha else '' }})
+          in {{ (now().timestamp() - migrate_started | float) | round(1) }} s.

@@ -1,0 +1,59 @@
+---
+# Move one mock server to another nested host.
+#
+#   ansible-playbook playbooks/shiraz/migrate.yml -e vm=shiraz-db -e target=shiraz-pve-b
+#   ansible-playbook playbooks/shiraz/migrate.yml -e vm=shiraz-db -e target=shiraz-pve-a -e mode=offline
+#
+#   vm      inventory name of the mock server
+#   target  nested host to move it to
+#   mode    live (default: keeps running) or offline (shut down, move, start)
+#
+# Checks quorum and replication first, measures what the application saw, and
+# finishes with the full verify run.
+
+- name: Check the request
+  hosts: localhost
+  gather_facts: false
+  become: false
+  tasks:
+    - name: Validate vm, target and mode
+      ansible.builtin.assert:
+        that:
+          - vm | default('') in groups['mock_servers']
+          - target | default('') in groups['nested_pve']
+          - mode | default('live') in ['live', 'offline']
+        fail_msg: >-
+          Usage: -e vm=<{{ groups['mock_servers'] | join('|') }}>
+          -e target=<{{ groups['nested_pve'] | join('|') }}> [-e mode=live|offline]
+        quiet: true
+
+- name: Migrate the mock server
+  hosts: "{{ target | default('none') }}"
+  gather_facts: false
+  become: true
+  tasks:
+    - name: Check the cluster first
+      ansible.builtin.import_tasks: tasks/preflight_cluster.yml
+
+    - name: Move the guest
+      ansible.builtin.include_tasks: tasks/migrate_guest.yml
+      vars:
+        migrate_name: "{{ vm }}"
+        migrate_vmid: "{{ hostvars[vm]['pve_guest_vmid'] }}"
+        migrate_target: "{{ target }}"
+        migrate_mode: "{{ mode | default('live') }}"
+
+- name: Measure the effect on the application
+  hosts: shiraz_app
+  gather_facts: false
+  become: true
+  tasks:
+    - name: Report the SQL probe
+      ansible.builtin.include_tasks: tasks/probe_report.yml
+      vars:
+        probe_since: "{{ hostvars[target]['migrate_started'] }}"
+        probe_label: "{{ mode | default('live') }} migration of {{ vm }}"
+      when: hostvars[target]['migrate_started'] is defined
+
+- name: Verify the lab
+  ansible.builtin.import_playbook: verify.yml

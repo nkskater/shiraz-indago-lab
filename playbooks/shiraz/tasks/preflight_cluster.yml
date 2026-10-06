@@ -1,0 +1,18 @@
+---
+# Runs on a cluster node. Stops the play unless the cluster can safely move
+# guests around.
+- name: Read the cluster's quorum state
+  ansible.builtin.command:
+    cmd: pvecm status
+  register: preflight_quorum
+  changed_when: false
+  check_mode: false
+
+- name: Check that the cluster is quorate
+  ansible.builtin.assert:
+    that:
+      - preflight_quorum.stdout is search('Quorate:\s+Yes')
+    fail_msg: The cluster is not quorate. Fix that first (pvecm status).
+    success_msg: >-
+      Quorate with {{ preflight_quorum.stdout | regex_search('Total votes:\s+(\d+)', '\1') | first }}
+      of {{ preflight_quorum.stdout | regex_search('Expected votes:\s+(\d+)', '\1') | first }} votes.
