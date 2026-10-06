@@ -1,0 +1,146 @@
+---
+# Tear the lab down, one layer at a time. Only guests listed in this inventory
+# are considered, and each one must carry the lab's name, tag and pool in the
+# live Proxmox data or the run aborts. Nothing is matched by wildcard.
+#
+#   Mock servers only (keeps the nested cluster):
+#     ansible-playbook playbooks/shiraz/destroy.yml -e confirm_destroy=yes -e layer=mock
+#
+#   Nested hosts and the QDevice (takes the mock servers with them):
+#     ansible-playbook playbooks/shiraz/destroy.yml -e confirm_destroy=yes -e layer=nested
+#
+#   Also remove the template of that layer (and, for layer=nested, the
+#   downloaded image dataset on the physical node):
+#     ... -e destroy_templates=yes
+#
+# The pool, API user and token on the physical node are left in place; remove
+# them by hand with the pveum commands in docs/shiraz-mock.md.
+
+- name: Check the request
+  hosts: localhost
+  gather_facts: false
+  become: false
+  tasks:
+    - name: Require explicit confirmation and a layer
+      ansible.builtin.assert:
+        that:
+          - confirm_destroy | default('no') == 'yes'
+          - layer | default('') in ['mock', 'nested']
+        fail_msg: >-
+          Nothing was touched. Re-run with -e confirm_destroy=yes and
+          -e layer=mock or -e layer=nested.
+        quiet: true
+
+# --- layer=mock ---------------------------------------------------------------
+
+- name: Destroy the mock servers
+  hosts: "{{ (layer | default('') == 'mock') | ternary('mock_servers', 'none') }}"
+  gather_facts: false
+  become: false
+  module_defaults:
+    group/community.proxmox.proxmox: "{{ nested_api }}"
+  tasks:
+    - name: Remove the mock server
+      ansible.builtin.include_tasks: tasks/destroy_guest.yml
+      vars:
+        destroy_vmid: "{{ pve_guest_vmid }}"
+        destroy_name: "{{ inventory_hostname }}"
+        destroy_kind: qemu
+        destroy_address: "{{ ansible_host }}"
+      args:
+        apply:
+          delegate_to: localhost
+
+- name: Destroy the mock server template
+  hosts: "{{ (layer | default('') == 'mock' and destroy_templates | default('no') == 'yes') | ternary('localhost', 'none') }}"
+  gather_facts: false
+  become: false
+  module_defaults:
+    group/community.proxmox.proxmox: "{{ nested_api }}"
+  tasks:
+    - name: Remove the Ubuntu template
+      ansible.builtin.include_tasks: tasks/destroy_guest.yml
+      vars:
+        destroy_vmid: "{{ nested_template_vmid }}"
+        destroy_name: "{{ nested_template_name }}"
+        destroy_kind: qemu
+        destroy_address: ""
+
+# --- layer=nested -------------------------------------------------------------
+
+- name: Destroy the nested hosts
+  hosts: "{{ (layer | default('') == 'nested') | ternary('nested_pve', 'none') }}"
+  gather_facts: false
+  become: false
+  module_defaults:
+    group/community.proxmox.proxmox: "{{ physical_api }}"
+  tasks:
+    - name: Remove the nested host
+      ansible.builtin.include_tasks: tasks/destroy_guest.yml
+      vars:
+        destroy_vmid: "{{ pve_guest_vmid }}"
+        destroy_name: "{{ inventory_hostname }}"
+        destroy_kind: qemu
+        destroy_address: "{{ ansible_host }}"
+      args:
+        apply:
+          delegate_to: localhost
+
+- name: Destroy the QDevice container
+  hosts: "{{ (layer | default('') == 'nested') | ternary('qdevice', 'none') }}"
+  gather_facts: false
+  become: false
+  module_defaults:
+    group/community.proxmox.proxmox: "{{ physical_api }}"
+  tasks:
+    - name: Remove the QDevice
+      ansible.builtin.include_tasks: tasks/destroy_guest.yml
+      vars:
+        destroy_vmid: "{{ pve_container_vmid }}"
+        destroy_name: "{{ inventory_hostname }}"
+        destroy_kind: lxc
+        destroy_address: "{{ ansible_host }}"
+      args:
+        apply:
+          delegate_to: localhost
+
+- name: Forget secrets that belonged to the nested cluster
+  hosts: "{{ (layer | default('') == 'nested') | ternary('localhost', 'none') }}"
+  gather_facts: false
+  become: false
+  tasks:
+    - name: Remove the saved nested API token
+      ansible.builtin.file:
+        path: "{{ nested_api_secret_file }}"
+        state: absent
+
+- name: Destroy the Debian template and its source image
+  hosts: "{{ (layer | default('') == 'nested' and destroy_templates | default('no') == 'yes') | ternary('physical', 'none') }}"
+  gather_facts: false
+  become: false
+  module_defaults:
+    group/community.proxmox.proxmox: "{{ physical_api }}"
+  tasks:
+    - name: Remove the Debian template
+      ansible.builtin.include_tasks: tasks/destroy_guest.yml
+      vars:
+        destroy_vmid: "{{ physical_template_vmid }}"
+        destroy_name: "{{ physical_template_name }}"
+        destroy_kind: qemu
+        destroy_address: ""
+      args:
+        apply:
+          delegate_to: localhost
+
+    - name: Refuse to remove a dataset that is not clearly the lab's
+      ansible.builtin.assert:
+        that:
+          - pve_cloud_template_zfs_dataset is match('^[^/]+/' ~ lab_tag ~ '$')
+        fail_msg: "REFUSING to destroy dataset '{{ pve_cloud_template_zfs_dataset }}'."
+        quiet: true
+
+    - name: Remove the dataset that held the downloaded image
+      community.general.zfs:
+        name: "{{ pve_cloud_template_zfs_dataset }}"
+        state: absent
+      become: true

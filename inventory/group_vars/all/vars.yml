@@ -19,6 +19,8 @@ lab_nameservers:
 # Cloud-init creates this user with the control node's key on every lab machine.
 lab_ansible_user: ansible
 lab_ansible_public_key: "{{ lookup('ansible.builtin.file', '~/.ssh/ansible.pub') }}"
+# Host keys of lab machines live here, not in ~/.ssh/known_hosts (see ansible.cfg).
+lab_known_hosts_file: ~/.ssh/known_hosts_shiraz_lab
 
 # --- Physical Proxmox API ---------------------------------------------------
 # Keys match the community.proxmox module parameters so the whole dict can be
@@ -38,3 +40,35 @@ physical_template_vmid: 9100
 physical_template_name: debian13-cloud-tmpl
 physical_storage: zfspool
 physical_bridge: vmbr0
+
+# --- Nested cluster ---------------------------------------------------------
+nested_cluster_name: shiraz-lab
+# The first host of the nested_pve group creates the cluster and holds the
+# templates. Playbooks address it as "nested_pve[0]".
+nested_primary: "{{ groups['nested_pve'] | first }}"
+nested_storage: shiraz-zfs        # ZFS pool name and Proxmox storage ID, same on both hosts
+nested_bridge: vmbr0
+nested_template_vmid: 9200
+nested_template_name: ubuntu2404-cloud-tmpl
+
+# Which node answers API calls. Override when that node is down:
+#   -e nested_api_node=shiraz-pve-b
+nested_api_node: "{{ nested_primary }}"
+
+# Bootstrap only (cluster, storage, users): Proxmox requires root@pam for these.
+nested_admin_api:
+  api_host: "{{ hostvars[nested_api_node]['ansible_host'] }}"
+  api_user: root@pam
+  api_password: "{{ vault_nested_root_password }}"
+  validate_certs: false
+
+# Everyday guest operations: pool-scoped token created by 02-cluster.yml.
+nested_api:
+  api_host: "{{ hostvars[nested_api_node]['ansible_host'] }}"
+  api_user: ansible-shiraz@pve
+  api_token_id: ansible
+  api_token_secret: "{{ vault_nested_api_token_secret }}"
+  validate_certs: false
+nested_api_secret_file: "{{ inventory_dir }}/group_vars/all/nested_api_token.vault.yml"
+lab_vault_id: shiraz
+lab_vault_password_file: ~/.config/ansible/shiraz_vault_pass

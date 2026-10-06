@@ -1,0 +1,83 @@
+---
+# Remove one lab guest, but only after proving from the live Proxmox data that
+# it is the guest we think it is.
+#
+# Required vars:
+#   destroy_api    community.proxmox connection dict
+#   destroy_vmid   VMID to remove
+#   destroy_name   name the guest must have
+#   destroy_kind   qemu or lxc
+#   destroy_address  address to forget in the lab known_hosts file ('' to skip)
+
+- name: Look up VMID
+  community.proxmox.proxmox_vm_info:
+    vmid: "{{ destroy_vmid }}"
+  register: destroy_lookup
+
+- name: Report that there is nothing to remove for
+  ansible.builtin.debug:
+    msg: "VMID {{ destroy_vmid }} ({{ destroy_name }}) does not exist - nothing to do."
+  when: destroy_lookup.proxmox_vms | length == 0
+
+- name: Remove
+  when: destroy_lookup.proxmox_vms | length > 0
+  vars:
+    destroy_found: "{{ destroy_lookup.proxmox_vms[0] }}"
+  block:
+    - name: Refuse unless the guest is provably part of the lab
+      ansible.builtin.assert:
+        that:
+          - destroy_found.name == destroy_name
+          - destroy_found.type == destroy_kind
+          - lab_tag in (destroy_found.tags | default('') | split(';'))
+          - destroy_found.pool | default('') == lab_pool
+        fail_msg: >-
+          REFUSING to touch VMID {{ destroy_vmid }}: found name='{{ destroy_found.name }}'
+          type='{{ destroy_found.type }}' tags='{{ destroy_found.tags | default('') }}'
+          pool='{{ destroy_found.pool | default('') }}', expected name='{{ destroy_name }}'
+          type='{{ destroy_kind }}' tag='{{ lab_tag }}' pool='{{ lab_pool }}'.
+        quiet: true
+
+    - name: Stop the virtual machine
+      community.proxmox.proxmox_kvm:
+        node: "{{ destroy_found.node }}"
+        vmid: "{{ destroy_vmid }}"
+        state: stopped
+        force: true
+        timeout: 120
+      when: destroy_kind == 'qemu'
+
+    - name: Delete the virtual machine
+      community.proxmox.proxmox_kvm:
+        node: "{{ destroy_found.node }}"
+        vmid: "{{ destroy_vmid }}"
+        state: absent
+        purge: true
+        destroy_unreferenced_disks: true
+        timeout: 300
+      when: destroy_kind == 'qemu'
+
+    - name: Stop the container
+      community.proxmox.proxmox:
+        node: "{{ destroy_found.node }}"
+        vmid: "{{ destroy_vmid }}"
+        state: stopped
+        force: true
+        timeout: 120
+      when: destroy_kind == 'lxc'
+
+    - name: Delete the container
+      community.proxmox.proxmox:
+        node: "{{ destroy_found.node }}"
+        vmid: "{{ destroy_vmid }}"
+        state: absent
+        purge: true
+        timeout: 300
+      when: destroy_kind == 'lxc'
+
+- name: Forget the SSH host key of
+  ansible.builtin.known_hosts:
+    name: "{{ destroy_address }}"
+    path: "{{ lab_known_hosts_file }}"
+    state: absent
+  when: destroy_address | length > 0
