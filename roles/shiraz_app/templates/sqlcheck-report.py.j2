@@ -6,9 +6,9 @@ usage: sqlcheck-report SINCE_EPOCH [UNTIL_EPOCH]
 
 downtime_seconds is measured from the last PASS before the first FAIL to the
 first PASS after the last FAIL, i.e. how long the database was unreachable
-from this server. max_gap_seconds is the longest silence between two log
-lines; a large value means the probe itself was paused (for example while
-this VM was being migrated).
+from this server. max_gap_seconds is the longest silence in the window,
+counting the time before the first sample; a large value means the probe
+itself was not running (this VM was paused, restarted or down).
 """
 import datetime
 import json
@@ -42,7 +42,8 @@ def main():
         "last_fail": None,
         "recovered": None,
         "downtime_seconds": 0,
-        "max_gap_seconds": round(max((b[0] - a[0] for a, b in zip(rows, rows[1:])), default=0), 1),
+        "first_sample": rows[0][1] if rows else None,
+        "max_gap_seconds": round(max([rows[0][0] - since] + [b[0] - a[0] for a, b in zip(rows, rows[1:])]), 1) if rows else None,
         "last_line": " ".join(rows[-1][1:]) if rows else None,
     }
     if fails:
