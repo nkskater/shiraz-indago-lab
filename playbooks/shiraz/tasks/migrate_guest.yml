@@ -7,6 +7,12 @@
 #   migrate_vmid    VMID
 #   migrate_target  node to move to
 #   migrate_mode    live (keeps running) or offline (shut down, move, start)
+# Optional:
+#   migrate_storage Proxmox storage that holds the guest's disks (default: nested_storage)
+
+- name: Set defaults
+  ansible.builtin.set_fact:
+    migrate_storage: "{{ migrate_storage | default(nested_storage) }}"
 
 - name: Find the guest in the cluster
   ansible.builtin.command:
@@ -43,6 +49,26 @@
           - migrate_repl.stdout | from_json | rejectattr('last_sync', 'defined') | list | length == 0
         fail_msg: "Replication of {{ migrate_name }} is failing or has never synced (pvesr status)."
         quiet: true
+
+    # The cloud-init drive is a local volume that replication does not cover.
+    # A normal migration copies it and deletes the source copy, but after an HA
+    # recovery the copy on the failed host is left behind, and the next
+    # migration to that host aborts with "volume already exists". The guest is
+    # not on the target, so a cloud-init volume with its VMID there is stale.
+    - name: Look for a stale cloud-init volume of the guest on the target
+      ansible.builtin.command:
+        cmd: "pvesm list {{ migrate_storage }} --vmid {{ migrate_vmid }}"
+      delegate_to: "{{ migrate_target }}"
+      register: migrate_target_volumes
+      changed_when: false
+      check_mode: false
+
+    - name: Remove the stale cloud-init volume from the target
+      ansible.builtin.command:
+        cmd: "pvesm free {{ migrate_storage }}:vm-{{ migrate_vmid }}-cloudinit"
+      delegate_to: "{{ migrate_target }}"
+      when: (migrate_storage ~ ':vm-' ~ migrate_vmid ~ '-cloudinit') in migrate_target_volumes.stdout
+      changed_when: true
 
     - name: List HA resources
       ansible.builtin.command:
@@ -93,6 +119,36 @@
       changed_when: true
 
     # --- Wait -------------------------------------------------------------------
+    # The HA manager acts on requests in its own loop (about every 10 s). Give
+    # it time to pick this one up before reading its state.
+    - name: Give the HA manager time to pick up the request
+      ansible.builtin.pause:
+        seconds: 20
+      when: migrate_is_ha
+
+    # Ends when the service is back in "started" on either node: on the target
+    # if the move worked, on the source if the HA manager gave up on it.
+    - name: Wait for the HA manager to finish
+      ansible.builtin.command:
+        cmd: ha-manager status
+      register: migrate_ha_after
+      changed_when: false
+      check_mode: false
+      until: migrate_ha_after.stdout is search('service vm:' ~ migrate_vmid ~ ' \\(\\S+, started\\)')
+      retries: 180
+      delay: 5
+      when: migrate_is_ha
+
+    - name: Check that the HA manager moved the guest
+      ansible.builtin.assert:
+        that:
+          - migrate_ha_after.stdout is search('service vm:' ~ migrate_vmid ~ ' \\(' ~ migrate_target ~ ', started\\)')
+        fail_msg: >-
+          The HA manager did not move {{ migrate_name }}; it is still on {{ migrate_source }}.
+          See the failed qmigrate task there (pvenode task list --vmid {{ migrate_vmid }}).
+        quiet: true
+      when: migrate_is_ha
+
     - name: Wait until the guest is running on the target
       ansible.builtin.command:
         cmd: pvesh get /cluster/resources --type vm --output-format json
@@ -105,17 +161,6 @@
         - (migrate_after.stdout | from_json | selectattr('vmid', 'equalto', migrate_vmid | int) | first).lock | default('') == ''
       retries: 120
       delay: 5
-
-    - name: Wait until the HA manager reports the guest as started
-      ansible.builtin.command:
-        cmd: ha-manager status
-      register: migrate_ha_after
-      changed_when: false
-      check_mode: false
-      until: migrate_ha_after.stdout is search('service vm:' ~ migrate_vmid ~ ' \(' ~ migrate_target ~ ', started\)')
-      retries: 60
-      delay: 5
-      when: migrate_is_ha
 
     - name: Report the move
       ansible.builtin.debug:

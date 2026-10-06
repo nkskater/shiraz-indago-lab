@@ -3,7 +3,7 @@
 # probe_since (epoch seconds).
 - name: Wait for the application server
   ansible.builtin.wait_for_connection:
-    timeout: 300
+    timeout: "{{ probe_recovery_timeout | default(600) }}"
 
 # The event is over for the application once the probe passes again. A guest
 # that was restarted needs a while for SQL Server to come back up.
@@ -32,9 +32,11 @@
       - "SQL probe on {{ inventory_hostname }} ({{ probe_label }}):"
       - "  samples {{ probe.samples }}, pass {{ probe.pass }}, fail {{ probe.fail }}"
       - "  database unreachable for about {{ probe.downtime_seconds }} s{{ probe_window }}"
-      - "  longest silence between probes {{ probe.max_gap_seconds }} s (above ~3 s means the probe itself was paused)"
+      - "  longest silence of the probe itself {{ probe.max_gap_seconds }} s{{ probe_silence_note }}"
   vars:
     probe: "{{ probe_report.stdout | from_json }}"
+    probe_silence_note: >-
+      {{ ' - the application server was paused or down for that long' if probe.max_gap_seconds | float > 10 else '' }}
     probe_window: >-
       {{ (' (' ~ probe.first_fail ~ ' to ' ~ (probe.recovered | default('still failing', true)) ~ ')')
          if probe.fail else '' }}
