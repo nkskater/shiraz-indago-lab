@@ -1,0 +1,137 @@
+---
+# Empty one nested host for maintenance by moving every mock server off it.
+#
+#   ansible-playbook playbooks/shiraz/drain-host.yml -e host=shiraz-pve-a
+#   ansible-playbook playbooks/shiraz/drain-host.yml -e host=shiraz-pve-a -e maintenance=true
+#   ansible-playbook playbooks/shiraz/drain-host.yml -e host=shiraz-pve-a -e maintenance=false
+#
+#   host         nested host to empty
+#   mode         live (default) or offline
+#   maintenance  true:  after draining, put the host in HA maintenance mode so
+#                       the HA manager will not place or recover guests on it
+#                false: only take the host out of maintenance mode again
+#
+# The servers stay where the drain put them. (The HA manager only moves back
+# guests that it evacuated itself; here the playbook moves them first.) Bring
+# them home afterwards with migrate.yml.
+
+- name: Check the request
+  hosts: localhost
+  gather_facts: false
+  become: false
+  tasks:
+    - name: Validate host, mode and maintenance
+      ansible.builtin.assert:
+        that:
+          - host | default('') in groups['nested_pve']
+          - mode | default('live') in ['live', 'offline']
+          - maintenance | default('unset') | string | lower in ['unset', 'true', 'false']
+          - groups['nested_pve'] | length > 1
+        fail_msg: >-
+          Usage: -e host=<{{ groups['nested_pve'] | join('|') }}> [-e mode=live|offline]
+          [-e maintenance=true|false]
+        quiet: true
+
+# Everything runs on another node, so it also works if the host being drained
+# is slow or about to go away.
+- name: Drain the host
+  hosts: "{{ groups['nested_pve'] | difference([host | default('')]) | first }}"
+  gather_facts: false
+  become: true
+  vars:
+    drain_maintenance: "{{ maintenance | default('unset') | string | lower }}"
+    drain_guests: >-
+      {{ drain_resources.stdout | from_json
+         | selectattr('type', 'equalto', 'qemu')
+         | selectattr('node', 'equalto', host)
+         | selectattr('pool', 'defined') | selectattr('pool', 'equalto', lab_pool)
+         | rejectattr('template', 'equalto', 1)
+         | sort(attribute='vmid') | list }}
+    drain_in_maintenance: "{{ drain_ha.stdout is search('lrm ' ~ host ~ ' \\(maintenance mode') }}"
+  tasks:
+    - name: Check the cluster first
+      ansible.builtin.import_tasks: tasks/preflight_cluster.yml
+
+    - name: Note the start time
+      ansible.builtin.set_fact:
+        drain_started: "{{ now().timestamp() }}"
+
+    - name: List the guests on the host
+      ansible.builtin.command:
+        cmd: pvesh get /cluster/resources --type vm --output-format json
+      register: drain_resources
+      changed_when: false
+      check_mode: false
+
+    - name: Show what will move
+      ansible.builtin.debug:
+        msg: >-
+          {{ host }} holds {{ drain_guests | length }} mock server(s):
+          {{ drain_guests | map(attribute='name') | join(', ') | default('none', true) }}.
+          Target: {{ inventory_hostname }}.
+
+    - name: Move each guest to this node
+      ansible.builtin.include_tasks: tasks/migrate_guest.yml
+      vars:
+        migrate_name: "{{ guest.name }}"
+        migrate_vmid: "{{ guest.vmid }}"
+        migrate_target: "{{ inventory_hostname }}"
+        migrate_mode: "{{ mode | default('live') }}"
+      loop: "{{ drain_guests }}"
+      loop_control:
+        loop_var: guest
+        label: "{{ guest.name }}"
+      when: drain_maintenance != 'false'
+
+    - name: Read the HA manager's view of the nodes
+      ansible.builtin.command:
+        cmd: ha-manager status
+      register: drain_ha
+      changed_when: false
+      check_mode: false
+
+    - name: Put the host in HA maintenance mode
+      ansible.builtin.command:
+        cmd: "ha-manager crm-command node-maintenance enable {{ host }}"
+      when:
+        - drain_maintenance == 'true'
+        - not drain_in_maintenance
+      changed_when: true
+
+    - name: Take the host out of HA maintenance mode
+      ansible.builtin.command:
+        cmd: "ha-manager crm-command node-maintenance disable {{ host }}"
+      when:
+        - drain_maintenance == 'false'
+        - drain_in_maintenance
+      changed_when: true
+
+    # Give the HA manager time to act on the request before measuring and verifying.
+    - name: Wait for the HA manager to settle
+      ansible.builtin.command:
+        cmd: ha-manager status
+      register: drain_ha_after
+      changed_when: false
+      check_mode: false
+      until:
+        - drain_ha_after.stdout is not search('service \S+ \(\S+, (migrate|relocate|starting|request_start|recovery|fence)\)')
+        - drain_maintenance != 'true' or drain_ha_after.stdout is search('lrm ' ~ host ~ ' \(maintenance mode')
+        - drain_maintenance != 'false' or drain_ha_after.stdout is not search('lrm ' ~ host ~ ' \(maintenance mode')
+      retries: 120
+      delay: 5
+
+- name: Measure the effect on the application
+  hosts: shiraz_app
+  gather_facts: false
+  become: true
+  vars:
+    drain_runner: "{{ groups['nested_pve'] | difference([host]) | first }}"
+  tasks:
+    - name: Report the SQL probe
+      ansible.builtin.include_tasks: tasks/probe_report.yml
+      vars:
+        probe_since: "{{ hostvars[drain_runner]['drain_started'] }}"
+        probe_label: "draining {{ host }}"
+
+- name: Verify the lab
+  ansible.builtin.import_playbook: verify.yml
