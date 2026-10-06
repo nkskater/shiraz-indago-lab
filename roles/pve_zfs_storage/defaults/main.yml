@@ -1,0 +1,19 @@
+---
+# Required
+pve_zfs_storage_pool: ""         # ZFS pool name; must be identical on every node for replication
+pve_zfs_storage_device: ""       # stable path, e.g. /dev/disk/by-id/scsi-...
+pve_zfs_storage_api: {}          # admin API connection used to register the storage
+
+pve_zfs_storage_id: "{{ pve_zfs_storage_pool }}"   # Proxmox storage ID
+pve_zfs_storage_nodes: "{{ ansible_play_hosts_all }}"
+pve_zfs_storage_content:
+  - images
+  - rootdir
+pve_zfs_storage_sparse: true     # thin-provisioned zvols
+
+pve_zfs_storage_ashift: 12
+pve_zfs_storage_compression: lz4
+
+# Upper limit for the ZFS ARC in bytes. ZFS takes up to half of RAM by default,
+# which on a hypervisor is memory the guests need.
+pve_zfs_storage_arc_max_bytes: 1073741824

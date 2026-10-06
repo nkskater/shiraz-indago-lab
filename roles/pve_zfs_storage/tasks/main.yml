@@ -1,0 +1,86 @@
+---
+- name: Check required variables
+  ansible.builtin.assert:
+    that:
+      - pve_zfs_storage_pool | length > 0
+      - pve_zfs_storage_device is match('/dev/disk/by-')
+      - pve_zfs_storage_api.api_host | default('') | length > 0
+    fail_msg: Set pve_zfs_storage_pool, pve_zfs_storage_api and a /dev/disk/by-* path in pve_zfs_storage_device.
+    quiet: true
+
+# --- Pool ---------------------------------------------------------------------
+
+- name: Ensure the ZFS tools are installed
+  ansible.builtin.apt:
+    name: zfsutils-linux
+    state: present
+
+- name: Check that the data disk exists
+  ansible.builtin.stat:
+    path: "{{ pve_zfs_storage_device }}"
+  register: pve_zfs_storage__device
+  failed_when: not pve_zfs_storage__device.stat.exists
+
+- name: List existing ZFS pools
+  ansible.builtin.command:
+    cmd: zpool list -H -o name
+  register: pve_zfs_storage__pools
+  changed_when: false
+  check_mode: false
+
+- name: Create the ZFS pool on the data disk
+  ansible.builtin.command:
+    argv:
+      - zpool
+      - create
+      - -o
+      - "ashift={{ pve_zfs_storage_ashift }}"
+      - -O
+      - "compression={{ pve_zfs_storage_compression }}"
+      - -O
+      - atime=off
+      - "{{ pve_zfs_storage_pool }}"
+      - "{{ pve_zfs_storage_device }}"
+  when: pve_zfs_storage_pool not in pve_zfs_storage__pools.stdout_lines
+  changed_when: true
+
+# --- ARC limit ----------------------------------------------------------------
+
+- name: Limit the ZFS ARC at boot
+  ansible.builtin.template:
+    src: zfs.conf.j2
+    dest: /etc/modprobe.d/zfs.conf
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Read the running ARC limit
+  ansible.builtin.slurp:
+    src: /sys/module/zfs/parameters/zfs_arc_max
+  register: pve_zfs_storage__arc
+
+- name: Apply the ARC limit to the running system
+  ansible.builtin.shell:
+    cmd: "echo {{ pve_zfs_storage_arc_max_bytes }} > /sys/module/zfs/parameters/zfs_arc_max"
+  when: (pve_zfs_storage__arc.content | b64decode | trim) != (pve_zfs_storage_arc_max_bytes | string)
+  changed_when: true
+
+# --- Proxmox storage entry ----------------------------------------------------
+
+- name: Register the pool as cluster storage
+  community.proxmox.proxmox_storage:
+    api_host: "{{ pve_zfs_storage_api.api_host }}"
+    api_user: "{{ pve_zfs_storage_api.api_user }}"
+    api_password: "{{ pve_zfs_storage_api.api_password }}"
+    validate_certs: "{{ pve_zfs_storage_api.validate_certs | default(true) }}"
+    name: "{{ pve_zfs_storage_id }}"
+    type: zfspool
+    zfspool_options:
+      pool: "{{ pve_zfs_storage_pool }}"
+      sparse: "{{ pve_zfs_storage_sparse }}"
+    content: "{{ pve_zfs_storage_content }}"
+    nodes: "{{ pve_zfs_storage_nodes }}"
+    state: present
+  delegate_to: localhost
+  become: false
+  run_once: true

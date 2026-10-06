@@ -1,0 +1,11 @@
+---
+galaxy_info:
+  author: nkskater
+  description: Create a ZFS pool on a data disk and register it as Proxmox VE storage
+  license: Proprietary
+  min_ansible_version: "2.16"
+  platforms:
+    - name: Debian
+      versions:
+        - trixie
+dependencies: []
