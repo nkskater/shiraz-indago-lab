@@ -1,0 +1,21 @@
+---
+docker_repo_uri: "https://download.docker.com/linux/{{ ansible_facts['distribution'] | lower }}"
+docker_keyring_url: "{{ docker_repo_uri }}/gpg"
+docker_keyring_path: /etc/apt/keyrings/docker.asc
+
+docker_packages:
+  - docker-ce
+  - docker-ce-cli
+  - containerd.io
+  - docker-buildx-plugin
+  - docker-compose-plugin
+
+# Users allowed to run docker without sudo.
+docker_users: []
+
+# /etc/docker/daemon.json. Bounded logs matter on a 15 GB disk.
+docker_daemon_options:
+  log-driver: json-file
+  log-opts:
+    max-size: 10m
+    max-file: "3"

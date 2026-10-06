@@ -1,0 +1,11 @@
+---
+galaxy_info:
+  author: nkskater
+  description: Install Docker Engine and the compose plugin from Docker's apt repository
+  license: Proprietary
+  min_ansible_version: "2.16"
+  platforms:
+    - name: Ubuntu
+      versions:
+        - noble
+dependencies: []
