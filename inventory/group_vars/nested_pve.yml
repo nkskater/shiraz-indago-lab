@@ -69,6 +69,10 @@ pve_api_access_user_comment: shiraz-indago-lab Ansible
 pve_api_access_token_id: "{{ nested_api.api_token_id }}"
 pve_api_access_acls:
   - { path: "/pool/{{ lab_pool }}", roleid: PVEVMAdmin }
+  # Pool.Audit, so the token can see pool membership. destroy.yml needs that as
+  # proof that a guest belongs to the lab. (An ACL on a path replaces what the
+  # user inherits from "/", so PVEAuditor below does not cover the pool.)
+  - { path: "/pool/{{ lab_pool }}", roleid: PVEPoolUser }
   - { path: "/storage/{{ nested_storage }}", roleid: PVEDatastoreUser }
   - { path: /sdn/zones/localnetwork, roleid: PVESDNUser }
   - { path: /, roleid: PVEAuditor }
